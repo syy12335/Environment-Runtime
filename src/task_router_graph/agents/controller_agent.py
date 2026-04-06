@@ -27,12 +27,13 @@ class ControllerAgent:
             rounds=rounds,
             skills_index=skills_index,
         )
+        llm = self.llm.bind(response_format={"type": "json_object"})
 
         observations: list[dict[str, Any]] = []
 
         # 按 system 约束进行多步决策：先 observe，信息足够后 generate_task。
         for step in range(1, self.max_steps + 1):
-            response = self.llm.invoke(
+            response = llm.invoke(
                 [
                     SystemMessage(content=rendered_system_prompt),
                     HumanMessage(
@@ -94,11 +95,18 @@ class ControllerAgent:
         rounds: list[dict[str, Any]],
         skills_index: str,
     ) -> str:
-        return (
-            self.system_prompt.replace("{{USER_INPUT}}", user_input)
-            .replace("{{ROUNDS_JSON}}", json.dumps(rounds, ensure_ascii=False, indent=2))
-            .replace("{{SKILLS_INDEX}}", skills_index)
-        )
+        rendered = self.system_prompt
+        rendered = _replace_last(rendered, "{{USER_INPUT}}", user_input)
+        rendered = _replace_last(rendered, "{{ROUNDS_JSON}}", json.dumps(rounds, ensure_ascii=False, indent=2))
+        rendered = _replace_last(rendered, "{{SKILLS_INDEX}}", skills_index)
+        return rendered
+
+
+def _replace_last(text: str, old: str, new: str) -> str:
+    head, sep, tail = text.rpartition(old)
+    if not sep:
+        raise ValueError(f"placeholder not found: {old}")
+    return head + new + tail
 
 
 def route_task(

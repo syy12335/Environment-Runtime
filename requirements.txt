@@ -1,5 +1,7 @@
 streamlit>=1.35.0
 PyYAML>=6.0.1
 pytest>=8.2.0
-langgraph>=0.2.0
-langchain-openai>=0.2.0
+langchain-core>=0.3.79,<0.4.0
+langchain>=0.3.0,<0.4.0
+langgraph>=0.2.0,<0.3.0
+langchain-openai>=0.3.0,<0.4.0

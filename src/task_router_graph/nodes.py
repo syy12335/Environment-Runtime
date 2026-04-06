@@ -41,7 +41,7 @@ def _tool_read(*, workspace_root: Path, run_root: Path, path: str) -> str:
     return text[:8000]
 
 
-def _tool_ls(*, workspace_root: Path, run_root: Path, path: str) -> str:
+def _tool_ls(*, workspace_root: Path, run_root: Path, path: str = ".") -> str:
     target = _resolve_observe_path(workspace_root=workspace_root, run_root=run_root, raw_path=path)
     entries = sorted(item.name for item in target.iterdir())
     return "\n".join(entries[:200])

@@ -25,8 +25,9 @@ class NormalAgent:
             rounds=rounds,
             normal_skills_index=normal_skills_index,
         )
+        llm = self.llm.bind(response_format={"type": "json_object"})
 
-        response = self.llm.invoke(
+        response = llm.invoke(
             [
                 SystemMessage(content=rendered_system_prompt),
                 HumanMessage(content="请只输出一个合法 JSON 对象，不要输出解释或 Markdown。"),
@@ -52,11 +53,18 @@ class NormalAgent:
         rounds: list[dict[str, Any]],
         normal_skills_index: str,
     ) -> str:
-        return (
-            self.system_prompt.replace("{{TASK_CONTENT}}", task_content)
-            .replace("{{ROUNDS_JSON}}", json.dumps(rounds, ensure_ascii=False, indent=2))
-            .replace("{{NORMAL_SKILLS_INDEX}}", normal_skills_index)
-        )
+        rendered = self.system_prompt
+        rendered = _replace_last(rendered, "{{TASK_CONTENT}}", task_content)
+        rendered = _replace_last(rendered, "{{ROUNDS_JSON}}", json.dumps(rounds, ensure_ascii=False, indent=2))
+        rendered = _replace_last(rendered, "{{NORMAL_SKILLS_INDEX}}", normal_skills_index)
+        return rendered
+
+
+def _replace_last(text: str, old: str, new: str) -> str:
+    head, sep, tail = text.rpartition(old)
+    if not sep:
+        raise ValueError(f"placeholder not found: {old}")
+    return head + new + tail
 
 
 def run_normal_task(

@@ -3,10 +3,9 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from langchain_openai import ChatOpenAI
+def build_chat_model(config: dict[str, Any]) -> Any:
+    from langchain_openai import ChatOpenAI
 
-
-def build_chat_model(config: dict[str, Any]) -> ChatOpenAI:
     model_cfg = config["model"]
     api_key_env = model_cfg["api_key_env"]
     api_key = os.getenv(api_key_env)
