@@ -1,32 +1,56 @@
-# Controller Encyclopedia
+﻿# Controller Encyclopedia
 
-本文件是 controller 的百科全书入口。
+本文件是 controller 的 skills index 入口。
 
-controller 在每一步决策中，必须结合：
+## 全局口径
 
-- 当前 `user_input`
-- `rounds` 中已有的 environment
-- 本 encyclopedia 及对应 reference
+1. 环境默认观测输入是 `ROUNDS_JSON`（不含 `controller_trace`）。
+2. controller 只输出一个下一步动作：`observe` 或 `generate_task`。
+3. `task_content` 是本轮任务 target，不是完整执行配置。
+4. 不得把“缺配置文件路径”默认等同于“不能生成 task_content”。
 
-来决定当前的下一步动作。
+## Observe 顺序与边界
 
-## Controller 的工作方式
+当尚不能生成 `task_content` 时，先判断缺失信息类型：
 
-controller 的策略固定如下：
+1. 缺 reference 规则 / taxonomy / content 生成条件：
+   - 优先 `read` 最相关 reference。
+   - 禁止先目录探索。
 
-1. 先观察：读取 `environment`、相关 `reference files` 与可用观察工具结果
-2. 再决策：判断当前是否还需要继续 `observe`
-3. 若信息足够：判断当前 task 属于哪一种 `type`
-4. 再根据对应 type 的 `Reference` 生成 `task_content`
-5. 若信息不足：继续 `observe`
+2. 缺外部环境事实（历史 run、报告、用户明确文件、具体产物）：
+   - 才允许 `read/ls` 环境对象。
 
-controller 不直接执行任务，也不直接面向用户回复。
+### `ls` 约束
+
+- `ls` 仅用于已知目录下的定向查看。
+- 禁止空参数 `ls {}`。
+- 禁止将 `ls` 作为默认第一步。
+- 禁止无目标扫描 `configs`、仓库根目录或泛目录。
+
+### `read` 优先级
+
+- 当 `USER_INPUT` 已可初步判断 task_type，第一步 observe 优先 `read` 该 task_type reference。
+- 不得先为了补配置执行目录扫描。
+
+## task_type 与 reference 映射
+
+- `normal` -> `normal-task.md`
+- `functest` -> `functest-task.md`
+- `accutest` -> `accutest-task.md`
+- `perftest` -> `perftest-task.md`
+
+优先 read 路径：
+
+- `src/task_router_graph/skills/controller/normal-task.md`
+- `src/task_router_graph/skills/controller/functest-task.md`
+- `src/task_router_graph/skills/controller/accutest-task.md`
+- `src/task_router_graph/skills/controller/perftest-task.md`
 
 ---
 
 ## `normal` task
 
-定位：强体验需求任务，通常需要尽快反馈，后续交给 `normal/chat agent` 执行，而不是继续进入测试 workflow。
+定位：解释、总结、查阅、引导、继续回答类任务。
 
 常见情况：
 
@@ -35,21 +59,6 @@ controller 不直接执行任务，也不直接面向用户回复。
 - 使用指导
 - 联系人工 oncall
 - 基于已有测试结果继续回答
-- 解释最近一次测试失败原因
-- 总结最近几轮任务输出
-
-何时优先考虑：
-
-- 当前请求的目标是解释、总结、查阅、引导，而不是重新执行测试
-- 当前轮次中已经有一定历史结果可供利用
-- 用户更关心“结果是什么意思”而不是“再跑一次测试”
-
-Observe 关注点：
-
-- 最近一次相关 task 的 `result`
-- 最近一次相关 round 的 `reply`
-- 最近一次相关报告或输出文件
-- 与当前请求直接相关的历史产物
 
 Reference：`normal-task.md`
 
@@ -57,28 +66,18 @@ Reference：`normal-task.md`
 
 ## `functest` task
 
-定位：功能测试任务，用于验证接口、协议、字段、断言或行为是否符合预期。
+定位：功能测试任务，用于定义“本轮测试目标（target）”。
 
 常见情况：
 
-- 要做功能测试
-- 使用昨天的配置进行测试
-- 验证某协议 body 是否符合要求
-- 检查某组断言是否通过
-- 重新执行某次功能测试
+- 做功能测试
+- 带关注点的功能测试（headers/body/assert）
+- 基于已有产物复测
 
-何时优先考虑：
+约束：
 
-- 用户明确要求“做功能测试”
-- 当前目标是验证功能正确性，而不是解释历史结果
-- 当前请求关注 headers / body / assert / response / 行为正确性
-
-Observe 关注点：
-
-- 当前协议或配置
-- 最近一次 functest 输出
-- 相关测试产物是否存在
-- functest reference 中要求的最小输入是否齐备
+- 对象明确且类型明确时，应优先生成面向对象的 target。
+- 不得默认将“未读取配置文件”作为继续 observe 的理由。
 
 Reference：`functest-task.md`
 
@@ -86,28 +85,7 @@ Reference：`functest-task.md`
 
 ## `accutest` task
 
-定位：精度测试 / 质量评估任务，用于判断输出质量、准确性或评分表现。
-
-常见情况：
-
-- 做精度测试
-- 评估当前输出质量
-- 给效果打分
-- 检查模型效果
-- 比较两版结果质量
-
-何时优先考虑：
-
-- 用户明确要求“评估”“打分”“精度测试”
-- 当前目标是执行评估，而不是解释已有指标
-- 当前请求关注准确性、质量、评分或整体效果
-
-Observe 关注点：
-
-- 评估对象
-- 最近一次 accutest 结果
-- 与评估目标相关的输入 / 输出材料
-- accutest reference 中要求的最小输入是否齐备
+定位：精度/质量/评分评估任务。
 
 Reference：`accutest-task.md`
 
@@ -115,38 +93,6 @@ Reference：`accutest-task.md`
 
 ## `perftest` task
 
-定位：性能测试任务，用于评估延迟、吞吐、并发、压测表现等性能维度。
-
-常见情况：
-
-- 做性能测试
-- 测一下延迟
-- 做压测
-- 看吞吐和 p95
-- 检查某接口的性能瓶颈
-
-何时优先考虑：
-
-- 用户明确要求“性能测试”“压测”“延迟”“吞吐”“并发”
-- 当前目标是执行性能评估，而不是解释历史性能指标
-- 当前请求关注 latency / throughput / qps / p95 / 并发
-
-Observe 关注点：
-
-- 测试对象
-- 最近一次 perftest 结果
-- 当前目标对象的性能相关上下文
-- perftest reference 中要求的最小输入是否齐备
+定位：性能测试任务，用于评估延迟、吞吐、并发、压测表现。
 
 Reference：`perftest-task.md`
-
----
-
-## Controller 决策准则
-
-1. 不要机械继承上一轮 `task.type`
-2. 不要在信息不足时直接生成 `task_content`
-3. 先判断是否需要继续 `observe`
-4. 信息足够后，再判断 task `type`
-5. 只有在对应 `Reference` 所要求的最小信息已满足时，才生成 `task_content`
-6. 每一轮只输出一个直接下一步动作
