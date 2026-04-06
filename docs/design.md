@@ -35,5 +35,5 @@
 - `src/task_router_graph/graph.py`：流程编排
 - `src/task_router_graph/nodes.py`：节点实现
 - `src/task_router_graph/schema.py`：Environment / Task / Action / Output
-- `src/task_router_graph/prompt/*`：prompt 模板
+- `src/task_router_graph/prompt/*`：仅保存可直接注入的 `system` 提示词
 - `src/task_router_graph/skills/*`：skills index 与路由参考

@@ -12,7 +12,7 @@
 - `scripts/run_demo.py`: 单 case 运行
 - `scripts/eval_cases.py`: 批量 case 运行
 - `app/streamlit_app.py`: Streamlit 可视化入口
-- `src/task_router_graph/*`: graph、nodes、schema、utils、prompt、skills
+- `src/task_router_graph/*`: graph、nodes、schema、utils、prompt（仅 system 直注入）、skills
 
 ## 运行
 

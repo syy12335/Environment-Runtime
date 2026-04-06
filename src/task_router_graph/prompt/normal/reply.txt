@@ -1,7 +1,0 @@
-Task:
-{{task_content}}
-
-Memory:
-{{memory_summary}}
-
-Write a concise final reply.
