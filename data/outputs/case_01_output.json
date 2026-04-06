@@ -1,0 +1,8 @@
+{
+  "case_id": "case_01",
+  "task_type": "functest",
+  "task_status": "done",
+  "task_result": "functest completed (mocked)",
+  "reply": "[functest] completed with mocked assertions",
+  "run_dir": "var\\runs\\run_20260406_163206"
+}

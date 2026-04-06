@@ -1,0 +1,16 @@
+model:
+  provider: qwen_cloud
+  name: qwen-plus
+  api_key_env: API_KEY_Qwen
+  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+
+paths:
+  cases_dir: data/cases
+  outputs_dir: data/outputs
+  run_root: var/runs
+  logs_dir: var/logs
+
+runtime:
+  save_logs: true
+  max_rounds: 4
+  default_task_type: normal

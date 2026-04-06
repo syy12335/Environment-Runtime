@@ -1,0 +1,13 @@
+﻿# Python
+__pycache__/
+*.pyc
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Runtime artifacts
+var/runs/run_*/
+var/logs/*.log
+
+# Local editor
+.vscode/
