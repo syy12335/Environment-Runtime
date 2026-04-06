@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -6,10 +6,14 @@ from typing import Any
 
 
 @dataclass
-class Action:
-    kind: str
-    detail: str
+class ControllerAction:
+    action_kind: str
+    reason: str
+    tool: str | None = None
     args: dict[str, Any] = field(default_factory=dict)
+    task_type: str | None = None
+    task_content: str | None = None
+    observation: str | None = None
 
 
 @dataclass
@@ -24,7 +28,7 @@ class Task:
 class RoundRecord:
     round: int
     user_input: str
-    action: Action
+    controller_trace: list[ControllerAction]
     task: Task
     reply: str
 

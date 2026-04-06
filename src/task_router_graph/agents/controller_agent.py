@@ -1,28 +1,102 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Callable
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from .common import extract_text, parse_json_object
 
-ALLOWED_TASK_TYPES = {"normal", "functest", "accutest", "perftest"}
 
+class ControllerAgent:
+    def __init__(self, *, llm: Any, system_prompt: str, max_steps: int = 3) -> None:
+        self.llm = llm
+        self.system_prompt = system_prompt
+        self.max_steps = max_steps
 
-def _render_system_prompt(
-    *,
-    system_prompt: str,
-    user_input: str,
-    rounds: list[dict[str, Any]],
-    skills_index: str,
-) -> str:
-    rounds_json = json.dumps(rounds, ensure_ascii=False, indent=2)
-    return (
-        system_prompt.replace("{{USER_INPUT}}", user_input)
-        .replace("{{ROUNDS_JSON}}", rounds_json)
-        .replace("{{SKILLS_INDEX}}", skills_index)
-    )
+    def run(
+        self,
+        *,
+        user_input: str,
+        rounds: list[dict[str, Any]],
+        skills_index: str,
+        observe_tools: dict[str, Callable[..., Any]],
+    ) -> dict[str, Any]:
+        rendered_system_prompt = self._render_system_prompt(
+            user_input=user_input,
+            rounds=rounds,
+            skills_index=skills_index,
+        )
+
+        observations: list[dict[str, Any]] = []
+
+        for step in range(1, self.max_steps + 1):
+            response = self.llm.invoke(
+                [
+                    SystemMessage(content=rendered_system_prompt),
+                    HumanMessage(
+                        content=json.dumps(
+                            {
+                                "step": step,
+                                "observations": observations,
+                            },
+                            ensure_ascii=False,
+                            indent=2,
+                        )
+                    ),
+                ]
+            )
+
+            text = extract_text(response.content if hasattr(response, "content") else str(response))
+            action = parse_json_object(text)
+
+            action_kind = str(action.get("action_kind", "")).strip()
+            if action_kind == "generate_task":
+                action["controller_trace"] = observations
+                return action
+
+            if action_kind != "observe":
+                raise ValueError(f"Unexpected action_kind from controller-agent: {action_kind}")
+
+            tool_name = str(action.get("tool", "")).strip()
+            tool_args = action.get("args", {})
+            if not isinstance(tool_args, dict):
+                tool_args = {}
+
+            tool = observe_tools.get(tool_name)
+            if tool is None:
+                raise ValueError(f"Observe tool is not registered: {tool_name}")
+
+            observation_result = tool(**tool_args)
+            observation_text = (
+                observation_result.strip()
+                if isinstance(observation_result, str)
+                else json.dumps(observation_result, ensure_ascii=False, indent=2)
+            )
+
+            observations.append(
+                {
+                    "tool": tool_name,
+                    "args": tool_args,
+                    "reason": str(action.get("reason", "")).strip(),
+                    "observation": observation_text,
+                }
+            )
+
+        raise ValueError("ControllerAgent exceeded max_steps without returning generate_task")
+
+    def _render_system_prompt(
+        self,
+        *,
+        user_input: str,
+        rounds: list[dict[str, Any]],
+        skills_index: str,
+    ) -> str:
+        return (
+            self.system_prompt.replace("{{USER_INPUT}}", user_input)
+            .replace("{{ROUNDS_JSON}}", json.dumps(rounds, ensure_ascii=False, indent=2))
+            .replace("{{SKILLS_INDEX}}", skills_index)
+        )
 
 
 def route_task(
@@ -32,30 +106,12 @@ def route_task(
     user_input: str,
     rounds: list[dict[str, Any]],
     skills_index: str,
-) -> dict[str, str]:
-    rendered_system_prompt = _render_system_prompt(
-        system_prompt=system_prompt,
+    observe_tools: dict[str, Callable[..., Any]],
+    max_steps: int = 3,
+) -> dict[str, Any]:
+    return ControllerAgent(llm=llm, system_prompt=system_prompt, max_steps=max_steps).run(
         user_input=user_input,
         rounds=rounds,
         skills_index=skills_index,
+        observe_tools=observe_tools,
     )
-    user_prompt = (
-        "请仅输出一个合法 JSON 对象。\n"
-        "不要输出解释，不要输出 Markdown，不要输出额外字段。"
-    )
-    response = llm.invoke([SystemMessage(content=rendered_system_prompt), HumanMessage(content=user_prompt)])
-    text = extract_text(response.content if hasattr(response, "content") else str(response))
-    payload = parse_json_object(text)
-
-    task_type = str(payload.get("task_type", "")).strip()
-    task_content = str(payload.get("task_content", "")).strip()
-    reason = str(payload.get("reason", "")).strip()
-
-    if task_type not in ALLOWED_TASK_TYPES:
-        raise ValueError(f"Invalid task_type from controller-agent: {task_type}")
-    if not task_content:
-        raise ValueError("Empty task_content from controller-agent")
-    if not reason:
-        reason = "route by controller-agent"
-
-    return {"task_type": task_type, "task_content": task_content, "reason": reason}

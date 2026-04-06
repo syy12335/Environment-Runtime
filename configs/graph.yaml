@@ -13,4 +13,5 @@ paths:
 runtime:
   save_logs: true
   max_rounds: 4
+  max_controller_steps: 3
   default_task_type: normal

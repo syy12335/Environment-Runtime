@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 from pathlib import Path
@@ -9,8 +9,8 @@ from langgraph.graph import END, START, StateGraph
 from typing_extensions import TypedDict
 
 from .llm import build_chat_model
-from .nodes import execute_node, observe_node, route_node, update_node
-from .schema import Action, Environment, Output, Task, to_dict
+from .nodes import execute_node, route_node, update_node
+from .schema import ControllerAction, Environment, Output, Task, to_dict
 from .utils import read_json, timestamp_tag, write_json
 
 
@@ -18,7 +18,7 @@ class GraphState(TypedDict, total=False):
     case_id: str
     user_input: str
     environment: Environment
-    action: Action
+    controller_trace: list[ControllerAction]
     task: Task
     reply: str
 
@@ -28,47 +28,51 @@ class TaskRouterGraph:
         self.root = Path(__file__).resolve().parents[2]
         self.config_path = (self.root / config_path).resolve() if not Path(config_path).is_absolute() else Path(config_path)
         self.config = yaml.safe_load(self.config_path.read_text(encoding="utf-8"))
+
         self._llm = build_chat_model(self.config)
         self._controller_system = self._load_prompt("src/task_router_graph/prompt/controller/system.md")
         self._normal_system = self._load_prompt("src/task_router_graph/prompt/normal/system.md")
+
         self._controller_skills_index = self._load_skill_bundle("src/task_router_graph/skills/controller/INDEX.md")
+        self._normal_skills_index = self._load_skill_bundle("src/task_router_graph/skills/normal/INDEX.md")
+
+        runtime_cfg = self.config.get("runtime", {})
+        self._max_controller_steps = int(runtime_cfg.get("max_controller_steps", runtime_cfg.get("max_observe_steps", 3)))
+        self._run_root = (self.root / self.config["paths"]["run_root"]).resolve()
+
         self._compiled_graph = self._build_graph()
 
     def _build_graph(self) -> Any:
         builder: StateGraph = StateGraph(GraphState)
-        builder.add_node("observe", self._observe_step)
         builder.add_node("route", self._route_step)
         builder.add_node("execute", self._execute_step)
         builder.add_node("update", self._update_step)
 
-        builder.add_edge(START, "observe")
-        builder.add_edge("observe", "route")
+        builder.add_edge(START, "route")
         builder.add_edge("route", "execute")
         builder.add_edge("execute", "update")
         builder.add_edge("update", END)
 
         return builder.compile()
 
-    def _observe_step(self, state: GraphState) -> GraphState:
-        environment = state["environment"]
-        user_input = state["user_input"]
-        action = observe_node(environment, user_input)
-        return {"action": action}
-
     def _route_step(self, state: GraphState) -> GraphState:
-        task = route_node(
+        task, controller_trace = route_node(
             llm=self._llm,
             controller_system=self._controller_system,
             controller_skills_index=self._controller_skills_index,
             environment=state["environment"],
             user_input=state["user_input"],
+            workspace_root=self.root,
+            run_root=self._run_root,
+            max_steps=self._max_controller_steps,
         )
-        return {"task": task}
+        return {"task": task, "controller_trace": controller_trace}
 
     def _execute_step(self, state: GraphState) -> GraphState:
         task, reply = execute_node(
             llm=self._llm,
             normal_system=self._normal_system,
+            normal_skills_index=self._normal_skills_index,
             environment=state["environment"],
             task=state["task"],
         )
@@ -78,7 +82,7 @@ class TaskRouterGraph:
         environment = update_node(
             state["environment"],
             state["user_input"],
-            state["action"],
+            state["controller_trace"],
             state["task"],
             state["reply"],
         )
@@ -121,8 +125,7 @@ class TaskRouterGraph:
         return self.run(case_id=case["case_id"], user_input=case["user_input"])
 
     def _prepare_run_dir(self) -> Path:
-        run_root = (self.root / self.config["paths"]["run_root"]).resolve()
-        run_dir = run_root / f"run_{timestamp_tag()}"
+        run_dir = self._run_root / f"run_{timestamp_tag()}"
         run_dir.mkdir(parents=True, exist_ok=True)
         return run_dir
 

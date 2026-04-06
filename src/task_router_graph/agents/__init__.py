@@ -1,6 +1,6 @@
-"""Agent modules for node execution."""
+﻿"""Agent modules for node execution."""
 
-from .controller_agent import route_task
-from .normal_agent import run_normal_task
+from .controller_agent import ControllerAgent, route_task
+from .normal_agent import NormalAgent, run_normal_task
 
-__all__ = ["route_task", "run_normal_task"]
+__all__ = ["ControllerAgent", "NormalAgent", "route_task", "run_normal_task"]
