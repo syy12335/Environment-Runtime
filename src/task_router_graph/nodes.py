@@ -62,7 +62,6 @@ def _build_observe_tools(
     workspace_root: Path,
     run_root: Path,
 ) -> dict[str, Callable[..., Any]]:
-    # 观察工具由 nodes 维护，避免把文件系统策略塞进 Environment。
     return {
         "read": lambda **kwargs: _tool_read(workspace_root=workspace_root, run_root=run_root, **kwargs),
         "ls": lambda **kwargs: _tool_ls(workspace_root=workspace_root, run_root=run_root, **kwargs),
@@ -70,7 +69,6 @@ def _build_observe_tools(
 
 
 def _build_controller_trace(route_result: dict[str, Any]) -> list[ControllerAction]:
-    # 先写 observe 轨迹，再补一条 generate_task。
     trace: list[ControllerAction] = []
 
     for item in route_result.get("controller_trace", []):
@@ -107,6 +105,7 @@ def route_node(
     run_root: Path,
     max_steps: int,
 ) -> tuple[Task, list[ControllerAction]]:
+    # 以“轮次快照”形式传给 agent，避免 agent 直接操作 Environment 对象本体。
     rounds_context = environment.build_observation_view(
         round_limit=5,
         include_user_input=True,

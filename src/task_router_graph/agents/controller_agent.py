@@ -54,7 +54,7 @@ class ControllerAgent:
 
             action_kind = str(action.get("action_kind", "")).strip()
             if action_kind == "generate_task":
-                # 将本轮 observe 轨迹附加到输出，供上层写入 environment。
+                # 将本轮 observe 轨迹附加到输出，供上层 round 结束后再写入 environment。
                 action["controller_trace"] = observations
                 return action
 
@@ -103,7 +103,6 @@ class ControllerAgent:
         return rendered
 
 
-# TODO(env-refactor): 观测轨迹 currently 存于本地 observations，未来可由 Environment.observe_session 托管。
 def _replace_last(text: str, old: str, new: str) -> str:
     head, sep, tail = text.rpartition(old)
     if not sep:

@@ -78,7 +78,7 @@ class Environment:
     def build_observation_view(
         self,
         *,
-        round_limit: int = 5,
+        round_limit: int | None = 5,
         include_user_input: bool = True,
         include_task: bool = True,
         include_reply: bool = True,
@@ -86,7 +86,8 @@ class Environment:
     ) -> list[dict[str, object]]:
         # 给 AI 读的观察视图。
         payload: list[dict[str, object]] = []
-        for round_item in self.rounds[-round_limit:]:
+        rounds = self.rounds if round_limit is None else self.rounds[-round_limit:]
+        for round_item in rounds:
             item: dict[str, object] = {"round": round_item.round}
             if include_user_input:
                 item["user_input"] = round_item.user_input

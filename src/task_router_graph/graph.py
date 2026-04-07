@@ -154,8 +154,17 @@ class TaskRouterGraph:
             run_dir=str(run_dir.relative_to(self.root)),
         )
 
+        environment_payload = {
+            "rounds": env.build_observation_view(
+                round_limit=None,
+                include_user_input=True,
+                include_task=True,
+                include_reply=True,
+                include_trace=True,
+            )
+        }
         result_payload = {
-            "environment": to_dict(env),
+            "environment": environment_payload,
             "output": to_dict(output),
         }
 
