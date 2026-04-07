@@ -10,7 +10,7 @@ from typing_extensions import TypedDict
 
 from .llm import build_chat_model
 from .nodes import accutest_node, functest_node, normal_node, perftest_node, route_node, update_node
-from .schema import ControllerAction, Environment, Output, Task
+from .schema import ControllerAction, Environment, Output, Task, to_dict
 from .utils import read_json, timestamp_tag, write_json
 
 
@@ -154,8 +154,10 @@ class TaskRouterGraph:
             run_dir=str(run_dir.relative_to(self.root)),
         )
 
-        # 由 Environment 统一导出最终结果，减少散落序列化逻辑。
-        result_payload = env.export_result(output=output)
+        result_payload = {
+            "environment": to_dict(env),
+            "output": to_dict(output),
+        }
 
         # 当前约定：每次 run 仅落最终结果 result.json。
         write_json(run_dir / "result.json", result_payload)

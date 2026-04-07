@@ -14,6 +14,7 @@ class Task:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "Task":
+        # 从字典恢复任务对象，并做基础字段兜底。
         return cls(
             type=str(payload.get("type", "")).strip(),
             content=str(payload.get("content", "")).strip(),
@@ -22,6 +23,7 @@ class Task:
         )
 
     def to_dict(self) -> dict[str, str]:
+        # 任务对象的稳定序列化出口。
         return {
             "type": self.type,
             "content": self.content,

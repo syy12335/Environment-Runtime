@@ -16,6 +16,7 @@ class Output:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "Output":
+        # 从字典恢复最终输出对象。
         return cls(
             case_id=str(payload.get("case_id", "")).strip(),
             task_type=str(payload.get("task_type", "")).strip(),
@@ -26,6 +27,7 @@ class Output:
         )
 
     def to_dict(self) -> dict[str, str]:
+        # 最终输出对象的统一序列化格式。
         return {
             "case_id": self.case_id,
             "task_type": self.task_type,

@@ -17,6 +17,7 @@ class ControllerAction:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ControllerAction":
+        # 从模型输出或持久化字典恢复动作对象。
         return cls(
             action_kind=str(payload.get("action_kind", "")).strip(),
             reason=str(payload.get("reason", "")).strip(),
@@ -28,6 +29,7 @@ class ControllerAction:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        # 统一动作对象的序列化格式。
         return {
             "action_kind": self.action_kind,
             "reason": self.reason,

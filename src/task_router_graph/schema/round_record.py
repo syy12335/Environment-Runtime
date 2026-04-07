@@ -18,6 +18,7 @@ class RoundRecord:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "RoundRecord":
+        # 从字典恢复一轮记录，包含嵌套的动作与任务对象。
         controller_trace_payload = payload.get("controller_trace", [])
         controller_trace = [
             ControllerAction.from_dict(item)
@@ -34,6 +35,7 @@ class RoundRecord:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        # 一轮记录的统一导出格式。
         return {
             "round": self.round,
             "user_input": self.user_input,
