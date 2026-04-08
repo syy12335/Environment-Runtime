@@ -6,16 +6,16 @@
 - docs/environment.md：Environment 真实结构与读写约束
 - docs/design.md：架构设计说明
 - docs/data_format.md：输入、运行时状态、输出格式说明
-- scripts/run_demo.py：单 case 运行
-- scripts/eval_cases.py：批量 case 运行
+- scripts/run_case.py：单 case 运行
+- scripts/run_cases.py：批量 case 运行
 - app/streamlit_app.py：Streamlit 可视化入口
 - src/task_router_graph/*：graph、nodes、schema、utils、prompt、skills、agents
 
 ## 运行
 
 pip install -r requirements.txt
-python scripts/run_demo.py --case data/cases/case_01.json
-python scripts/eval_cases.py
+python scripts/run_case.py --case data/cases/case_01.json
+python scripts/run_cases.py
 streamlit run app/streamlit_app.py
 
 ## 统一口径

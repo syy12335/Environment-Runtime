@@ -1,0 +1,11 @@
+{
+  "count": 5,
+  "files": [
+    "env_01.json",
+    "env_02.json",
+    "env_03.json",
+    "env_04.json",
+    "env_05.json"
+  ],
+  "schema_note": "Environment full state: rounds + cur_round + updated_at"
+}
