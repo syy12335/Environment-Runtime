@@ -187,7 +187,7 @@ def main() -> None:
     parser.add_argument("--out", default="var/reports/cases_merged.csv", help="Output CSV path")
     args = parser.parse_args()
 
-    project_root = Path(__file__).resolve().parents[1]
+    project_root = Path(__file__).resolve().parents[2]
     runs_dir = (project_root / args.runs_dir).resolve() if not Path(args.runs_dir).is_absolute() else Path(args.runs_dir)
     output_path = (project_root / args.out).resolve() if not Path(args.out).is_absolute() else Path(args.out)
 

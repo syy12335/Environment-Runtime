@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def resolve_run_root(*, config_path: Path, run_root_arg: str | None) -> Path:
