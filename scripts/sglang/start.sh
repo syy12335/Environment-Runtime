@@ -14,7 +14,7 @@ API_KEY="${SGLANG_API_KEY:-EMPTY}"
 
 CONDA_ACTIVATE="${SGLANG_CONDA_ACTIVATE:-/opt/conda/bin/activate}"
 CONDA_ENV="${SGLANG_CONDA_ENV:-task-routing-clean}"
-CPU_CORES="${SGLANG_CPU_CORES:-0-3}"
+CPU_CORES="${SGLANG_CPU_CORES:-}"
 NICE_LEVEL="${SGLANG_NICE_LEVEL:-10}"
 
 mkdir -p "$LOG_DIR" "$(dirname "$PID_FILE")"
@@ -26,11 +26,7 @@ if [[ -f "$PID_FILE" ]]; then
     echo "log: $LOG_FILE"
     exit 0
   fi
-fi
-
-if ! command -v taskset >/dev/null 2>&1; then
-  echo "taskset not found; cannot pin CPU cores." >&2
-  exit 1
+  rm -f "$PID_FILE"
 fi
 
 if ! command -v nice >/dev/null 2>&1; then
@@ -43,16 +39,38 @@ if [[ ! -f "$CONDA_ACTIVATE" ]]; then
   exit 1
 fi
 
+if [[ -n "$CPU_CORES" ]]; then
+  if ! command -v taskset >/dev/null 2>&1; then
+    echo "taskset not found; cannot pin CPU cores." >&2
+    exit 1
+  fi
+  if ! taskset -c "$CPU_CORES" true >/dev/null 2>&1; then
+    echo "invalid SGLANG_CPU_CORES=$CPU_CORES for current cpuset; run \`taskset -pc \$\$\` to inspect allowed CPUs" >&2
+    exit 1
+  fi
+fi
+
 (
   source "$CONDA_ACTIVATE" "$CONDA_ENV"
-  exec nice -n "$NICE_LEVEL" taskset -c "$CPU_CORES" \
-    python -m sglang.launch_server \
-      --model-path "$MODEL_PATH" \
-      --served-model-name "$SERVED_MODEL_NAME" \
-      --host "$HOST" \
-      --port "$PORT" \
-      --api-key "$API_KEY" \
-      "$@"
+  if [[ -n "$CPU_CORES" ]]; then
+    exec nice -n "$NICE_LEVEL" taskset -c "$CPU_CORES" \
+      python -m sglang.launch_server \
+        --model-path "$MODEL_PATH" \
+        --served-model-name "$SERVED_MODEL_NAME" \
+        --host "$HOST" \
+        --port "$PORT" \
+        --api-key "$API_KEY" \
+        "$@"
+  else
+    exec nice -n "$NICE_LEVEL" \
+      python -m sglang.launch_server \
+        --model-path "$MODEL_PATH" \
+        --served-model-name "$SERVED_MODEL_NAME" \
+        --host "$HOST" \
+        --port "$PORT" \
+        --api-key "$API_KEY" \
+        "$@"
+  fi
 ) >>"$LOG_FILE" 2>&1 &
 
 PID=$!
@@ -68,5 +86,6 @@ if kill -0 "$PID" 2>/dev/null; then
   exit 0
 fi
 
+rm -f "$PID_FILE"
 echo "sglang failed to start; check log: $LOG_FILE" >&2
 exit 1
