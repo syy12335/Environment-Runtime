@@ -3,17 +3,22 @@ model:
   provider: sglang
   provider_env: MODEL_PROVIDER
   temperature: 0
+  request_timeout_sec: 90
+  max_retries: 1
+  max_tokens: 2048
 
   providers:
     aliyun:
       name: qwen-plus
       api_key_env: API_KEY_Qwen
       base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      max_tokens: 2048
 
     sglang:
       name: qwen35-4b
       api_key_env: SGLANG_API_KEY
       base_url: http://127.0.0.1:30000/v1
+      max_tokens: 2048
 
 paths:
   cases_dir: data/cases

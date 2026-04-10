@@ -61,9 +61,27 @@ def build_chat_model(config: dict[str, Any]) -> Any:
 
     temperature = float(model_cfg.get("temperature", provider_cfg.get("temperature", 0)))
 
-    return ChatOpenAI(
-        model=model_name,
-        base_url=base_url,
-        api_key=api_key,
-        temperature=temperature,
+    request_timeout_sec = float(
+        provider_cfg.get(
+            "request_timeout_sec",
+            model_cfg.get("request_timeout_sec", model_cfg.get("timeout_sec", 90)),
+        )
     )
+    max_retries = int(provider_cfg.get("max_retries", model_cfg.get("max_retries", 1)))
+
+    # 限制单次生成长度，避免请求长时间卡在解码阶段。
+    max_tokens_raw = provider_cfg.get("max_tokens", model_cfg.get("max_tokens", 0))
+    max_tokens = int(max_tokens_raw) if max_tokens_raw is not None else 0
+
+    chat_kwargs: dict[str, Any] = {
+        "model": model_name,
+        "base_url": base_url,
+        "api_key": api_key,
+        "temperature": temperature,
+        "timeout": request_timeout_sec,
+        "max_retries": max_retries,
+    }
+    if max_tokens > 0:
+        chat_kwargs["max_tokens"] = max_tokens
+
+    return ChatOpenAI(**chat_kwargs)

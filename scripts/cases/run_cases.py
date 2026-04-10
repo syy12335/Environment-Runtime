@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
 import sys
 import threading
 import time
@@ -68,6 +69,27 @@ def _with_heartbeat(task_name: str, interval_sec: float, fn: Callable[[], T]) ->
     return result, elapsed
 
 
+def _run_with_timeout(fn: Callable[[], T], timeout_sec: float, label: str) -> T:
+    timeout_sec = max(0.0, float(timeout_sec))
+    if timeout_sec <= 0:
+        return fn()
+
+    if not hasattr(signal, "SIGALRM"):
+        return fn()
+
+    def _timeout_handler(_signum: int, _frame) -> None:
+        raise TimeoutError(f"{label} timed out after {timeout_sec:.0f}s")
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.setitimer(signal.ITIMER_REAL, timeout_sec)
+    try:
+        return fn()
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+
+
 def _is_valid_case_file(path: Path) -> bool:
     if path.name == "manifest.json":
         return False
@@ -92,6 +114,7 @@ def main() -> None:
         parser.add_argument("--config", default="configs/graph.yaml", help="Path to graph config")
         parser.add_argument("--cases-dir", default="data/cases", help="Directory containing case json files")
         parser.add_argument("--heartbeat-sec", type=float, default=10.0, help="Heartbeat interval seconds (0 to disable)")
+        parser.add_argument("--case-timeout-sec", type=float, default=180.0, help="Per-case timeout seconds (0 to disable)")
         parser.add_argument("--fail-fast", action="store_true", help="Stop at first case failure")
         parser.add_argument("--show-traceback", action="store_true", help="Print full traceback for failed cases")
         args = parser.parse_args()
@@ -150,7 +173,11 @@ def main() -> None:
                 result, _ = _with_heartbeat(
                     f"Case {case_id}",
                     args.heartbeat_sec,
-                    lambda: graph.run_case(case_file),
+                    lambda: _run_with_timeout(
+                        lambda: graph.run_case(case_file),
+                        args.case_timeout_sec,
+                        f"Case {case_id}",
+                    ),
                 )
             except Exception as exc:
                 runtime_failures.append((case_file.name, f"{exc.__class__.__name__}: {exc}"))

@@ -66,9 +66,10 @@ class ControllerAgent:
             text = extract_text(response.content if hasattr(response, "content") else str(response))
             action = parse_json_object(text)
 
-            action_kind = str(action.get("action_kind", "")).strip()
+            action_kind = _normalize_action_kind(action)
             if action_kind == "generate_task":
                 # 将当前 task 的 observe 轨迹附加到输出，供 graph 在 update 节点统一写入 environment。
+                action["action_kind"] = "generate_task"
                 action["controller_trace"] = observations
                 return action
 
@@ -138,6 +139,27 @@ def _replace_last(text: str, old: str, new: str) -> str:
     if not sep:
         raise ValueError(f"placeholder not found: {old}")
     return head + new + tail
+
+
+def _normalize_action_kind(action: dict[str, Any]) -> str:
+    raw = str(action.get("action_kind", action.get("action", ""))).strip().lower()
+    if raw in {"generate_task", "generate-task", "generate"}:
+        return "generate_task"
+    if raw in {"observe", "observation"}:
+        return "observe"
+
+    has_tool = bool(str(action.get("tool", "")).strip())
+    has_task_type = bool(str(action.get("task_type", "")).strip())
+    has_task_content = bool(str(action.get("task_content", "")).strip())
+    has_task = has_task_type or has_task_content
+
+    # 容错：模型偶发漏填 action_kind 时按字段意图推断。
+    if has_tool and not has_task:
+        return "observe"
+    if has_task and not has_tool:
+        return "generate_task"
+
+    return raw
 
 
 def _merge_invoke_config(
