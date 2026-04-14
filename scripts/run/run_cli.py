@@ -105,6 +105,11 @@ def main() -> None:
         if args.interactive and args.input is not None:
             parser.error("--interactive cannot be used together with --input")
 
+        # UX: when launched directly in a terminal with no --input, auto-enter interactive mode.
+        if (not args.interactive) and (args.input is None or not str(args.input).strip()) and sys.stdin.isatty():
+            args.interactive = True
+            _log("No --input provided, switching to interactive mode.")
+
         try:
             from task_router_graph import TaskRouterGraph
         except Exception as exc:
