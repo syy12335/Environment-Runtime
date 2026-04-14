@@ -42,9 +42,13 @@
             {
               "action_kind": "observe",
               "reason": "复测场景需要读取最近结果",
-              "tool": "read",
+              "tool": "build_observation_view",
               "args": {
-                "path": "var/runs/run_SAMPLE/environment.json"
+                "task_limit": 5,
+                "include_trace": false,
+                "include_user_input": false,
+                "include_task": true,
+                "include_reply": false
               },
               "task_type": null,
               "task_content": null,
