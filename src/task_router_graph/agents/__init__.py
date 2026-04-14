@@ -6,6 +6,7 @@ from .failure_diagnosis_agent import FailureDiagnosisAgent, run_failure_diagnosi
 from .functest_agent import FunctestAgent, run_functest_task
 from .normal_agent import NormalAgent, run_normal_task
 from .perftest_agent import PerftestAgent, run_perftest_task
+from .reply_agent import ReplyAgent, run_reply_task
 
 __all__ = [
     "ControllerAgent",
@@ -15,10 +16,12 @@ __all__ = [
     "AccutestAgent",
     "PerftestAgent",
     "FailureDiagnosisAgent",
+    "ReplyAgent",
     "route_task",
     "run_normal_task",
     "run_functest_task",
     "run_accutest_task",
     "run_perftest_task",
     "run_failure_diagnosis_task",
+    "run_reply_task",
 ]

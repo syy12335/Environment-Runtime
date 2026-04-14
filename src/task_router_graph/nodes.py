@@ -12,6 +12,7 @@ from .agents import (
     run_functest_task,
     run_normal_task,
     run_perftest_task,
+    run_reply_task,
 )
 from .schema import ControllerAction, Environment, Task
 
@@ -550,13 +551,20 @@ def _build_route_failed_task(*, user_input: str, reason: str) -> Task:
     return Task(type="normal", content=user_input, status="failed", result=message)
 
 
+def _build_execute_reply(*, stage: str, task: Task) -> str:
+    status = str(task.status).strip().lower() or "unknown"
+    result = str(task.result).strip()
+    if result:
+        return f"[{stage}] status={status}; result={result}"
+    return f"[{stage}] status={status}"
+
+
 def _try_skip_execute(task: Task, *, stage: str) -> tuple[Task, str] | None:
     status = str(task.status).strip().lower()
     if status not in {"done", "failed"}:
         return None
 
-    summary = task.result or f"{stage} skipped because task status is {status}"
-    return task, f"[{stage}] {summary}"
+    return task, _build_execute_reply(stage=stage, task=task)
 
 
 def _controller_trace_to_track(controller_trace: list[ControllerAction]) -> list[dict[str, Any]]:
@@ -670,7 +678,7 @@ def normal_node(
     )
     task.status = result["task_status"]
     task.result = result["task_result"]
-    reply = result["reply"]
+    reply = _build_execute_reply(stage="normal", task=task)
     return task, reply, _build_agent_track(agent="normal", event="execute", task=task, reply=reply)
 
 
@@ -683,7 +691,7 @@ def functest_node(*, task: Task) -> tuple[Task, str, list[dict[str, Any]]]:
     result = run_functest_task(task_content=task.content)
     task.status = result["task_status"]
     task.result = result["task_result"]
-    reply = result["reply"]
+    reply = _build_execute_reply(stage="functest", task=task)
     return task, reply, _build_agent_track(agent="functest", event="execute", task=task, reply=reply)
 
 
@@ -696,7 +704,7 @@ def accutest_node(*, task: Task) -> tuple[Task, str, list[dict[str, Any]]]:
     result = run_accutest_task(task_content=task.content)
     task.status = result["task_status"]
     task.result = result["task_result"]
-    reply = result["reply"]
+    reply = _build_execute_reply(stage="accutest", task=task)
     return task, reply, _build_agent_track(agent="accutest", event="execute", task=task, reply=reply)
 
 
@@ -709,7 +717,7 @@ def perftest_node(*, task: Task) -> tuple[Task, str, list[dict[str, Any]]]:
     result = run_perftest_task(task_content=task.content)
     task.status = result["task_status"]
     task.result = result["task_result"]
-    reply = result["reply"]
+    reply = _build_execute_reply(stage="perftest", task=task)
     return task, reply, _build_agent_track(agent="perftest", event="execute", task=task, reply=reply)
 
 
@@ -770,6 +778,54 @@ def failure_diagnosis_node(
         analyzer_track=analyzer_track,
     )
     return environment, task
+
+
+def reply_node(
+    *,
+    llm: Any,
+    reply_system: str,
+    environment: Environment,
+    user_input: str,
+    task: Task,
+    invoke_config: dict[str, Any] | None = None,
+) -> str:
+    environment_view = environment.build_observation_view(
+        task_limit=None,
+        include_user_input=True,
+        include_task=True,
+        include_reply=True,
+        include_trace=False,
+    )
+
+    try:
+        reply = run_reply_task(
+            llm=llm,
+            system_prompt=reply_system,
+            user_input=user_input,
+            final_task=task.to_dict(),
+            environment_view=environment_view,
+            invoke_config=invoke_config,
+        )
+    except Exception:
+        status = str(task.status).strip().lower()
+        result = str(task.result).strip()
+        if status == "done":
+            reply = result or "本轮任务已完成。"
+        elif result:
+            reply = f"本轮任务未完成：{result}"
+        else:
+            reply = "本轮任务未完成，请根据任务结果继续排查。"
+
+    environment.append_last_task_track(
+        track_item={
+            "agent": "reply",
+            "event": "compose",
+            "task_status": str(task.status).strip(),
+            "task_result": str(task.result).strip(),
+            "reply": reply,
+        }
+    )
+    return reply
 
 
 def update_node(

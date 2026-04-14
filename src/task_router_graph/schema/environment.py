@@ -98,6 +98,21 @@ class Environment:
         }
 
 
+    def append_last_task_track(self, *, track_item: dict[str, Any]) -> bool:
+        if not isinstance(track_item, dict):
+            return False
+        if not self.rounds:
+            return False
+
+        last_round = self.rounds[-1]
+        if not last_round.tasks:
+            return False
+
+        last_round.tasks[-1].track.append(copy.deepcopy(track_item))
+        self.updated_at = _now_iso()
+        return True
+
+
     def annotate_last_failed_task(
         self,
         *,

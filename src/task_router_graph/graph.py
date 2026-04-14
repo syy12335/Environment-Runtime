@@ -15,6 +15,7 @@ from .nodes import (
     functest_node,
     normal_node,
     perftest_node,
+    reply_node,
     route_node,
     update_node,
 )
@@ -49,6 +50,7 @@ class TaskRouterGraph:
         self._controller_system = self._load_prompt("src/task_router_graph/prompt/controller/system.md")
         self._normal_system = self._load_prompt("src/task_router_graph/prompt/normal/system.md")
         self._failure_diagnosis_system = self._load_prompt("src/task_router_graph/prompt/failure_diagnosis/system.md")
+        self._reply_system = self._load_prompt("src/task_router_graph/prompt/reply/system.md")
 
         self._controller_skills_index = self._load_skill_bundle("src/task_router_graph/skills/controller/INDEX.md")
         self._normal_skills_index = self._load_skill_bundle("src/task_router_graph/skills/normal/INDEX.md")
@@ -72,6 +74,7 @@ class TaskRouterGraph:
         builder.add_node("perftest", self._perftest_step)
         builder.add_node("update", self._update_step)
         builder.add_node("failure_diagnose", self._failure_diagnose_step)
+        builder.add_node("final_reply", self._reply_step)
 
         builder.add_edge(START, "init")
         builder.add_edge("init", "route")
@@ -95,10 +98,11 @@ class TaskRouterGraph:
             {
                 "failure_diagnose": "failure_diagnose",
                 "route": "route",
-                "end": END,
+                "final_reply": "final_reply",
             },
         )
         builder.add_edge("failure_diagnose", "route")
+        builder.add_edge("final_reply", END)
 
         return builder.compile()
 
@@ -176,6 +180,19 @@ class TaskRouterGraph:
             "task": task,
         }
 
+    def _reply_step(self, state: GraphState) -> GraphState:
+        reply = reply_node(
+            llm=self._llm,
+            reply_system=self._reply_system,
+            environment=state["environment"],
+            user_input=state["user_input"],
+            task=state["task"],
+            invoke_config=self._build_llm_invoke_config(state=state, node="final_reply"),
+        )
+        return {
+            "reply": reply,
+        }
+
     def _update_step(self, state: GraphState) -> GraphState:
         environment = update_node(
             state["environment"],
@@ -196,21 +213,21 @@ class TaskRouterGraph:
             "failed_retry_count": failed_retry_count,
         }
 
-    def _pick_after_update(self, state: GraphState) -> Literal["failure_diagnose", "route", "end"]:
+    def _pick_after_update(self, state: GraphState) -> Literal["failure_diagnose", "route", "final_reply"]:
         task_status = str(state["task"].status).strip().lower()
         task_turn = int(state.get("task_turn", 0))
 
         if task_status == "done":
-            return "end"
+            return "final_reply"
 
         if task_turn >= self._max_task_turns:
-            return "end"
+            return "final_reply"
 
         if task_status == "failed":
             failed_retry_count = int(state.get("failed_retry_count", 0))
             if failed_retry_count <= self._max_failed_retries:
                 return "failure_diagnose"
-            return "end"
+            return "final_reply"
 
         return "route"
 
