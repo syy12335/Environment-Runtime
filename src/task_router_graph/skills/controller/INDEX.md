@@ -4,7 +4,7 @@
 
 ## 全局口径
 
-1. 环境默认观测输入是 `TASKS_JSON`（不含 `track`）；失败轨迹需通过工具显式获取。
+1. 环境默认观测输入是 `TASKS_JSON`（不含 `track`）；失败场景下可能附带 `previous_failed_task` 摘要，完整失败轨迹仍需通过工具显式获取。
 2. controller 只输出一个下一步动作：`observe` 或 `generate_task`。
 3. `task_content` 是本轮任务 target，不是完整执行配置。
 4. 不得把“缺配置文件路径”默认等同于“不能生成 task_content”。
@@ -42,7 +42,7 @@
 - `latest_run_snapshot {"task_type":"...","include_trace":false}`
 - `recent_tasks {"limit":5,"task_type":"...","status":"done|failed","include_trace":false}`
 - `demo_lookup {"key":"normal.latest_summary"}`
-- `build_observation_view {"task_limit":3,"include_trace":true,"include_user_input":false,"include_task":false,"include_reply":false}`（按需读取 environment 轨迹补充）
+- `build_observation_view {"task_limit":3,"include_trace":false,"include_user_input":false,"include_task":false,"include_reply":false}`（按需读取 environment 视图；必要时再开启 trace）
 - `previous_failed_track {}`（失败重试时读取上一失败 task 的 track）
 - `beijing_time {}`（获取当前北京时间）
 - `web_search {"query":"...","limit":3}`（上网检索公开信息，仅在需要外部时效事实时使用）

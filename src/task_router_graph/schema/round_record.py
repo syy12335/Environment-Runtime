@@ -6,6 +6,13 @@ from typing import Any
 from .task_record import TaskRecord
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
 @dataclass
 class RoundRecord:
     # environment 顶层单元：一次用户输入对应一个 round，可包含多个 task。
@@ -18,7 +25,7 @@ class RoundRecord:
         tasks_payload = payload.get("tasks", [])
         tasks = [TaskRecord.from_dict(item) for item in tasks_payload if isinstance(item, dict)]
         return cls(
-            round_id=int(payload.get("round_id", 0) or 0),
+            round_id=_safe_int(payload.get("round_id", 0) or 0, 0),
             user_input=str(payload.get("user_input", "")),
             tasks=tasks,
         )

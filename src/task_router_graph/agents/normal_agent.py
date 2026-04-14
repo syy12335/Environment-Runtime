@@ -6,7 +6,7 @@ from typing import Any, Callable
 from jsonschema import ValidationError, validate
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from .common import extract_text, parse_json_object
+from .common import extract_text, merge_invoke_config, parse_json_object, replace_last
 
 
 _NORMAL_ACTION_SCHEMA: dict[str, Any] = {
@@ -91,7 +91,7 @@ class NormalAgent:
         beijing_time_calls = 0
 
         for step in range(1, max(1, int(max_steps)) + 1):
-            step_invoke_config = _merge_invoke_config(
+            step_invoke_config = merge_invoke_config(
                 invoke_config,
                 run_name="task-router.normal.llm_step",
                 tags=["task-router", "normal", f"normal-step:{step}"],
@@ -190,54 +190,14 @@ class NormalAgent:
         normal_skills_index: str,
     ) -> str:
         rendered = self.system_prompt
-        rendered = _replace_last(rendered, "{{TASK_CONTENT}}", task_content)
-        rendered = _replace_last(rendered, "{{TASKS_JSON}}", json.dumps(tasks, ensure_ascii=False, indent=2))
-        rendered = _replace_last(rendered, "{{NORMAL_SKILLS_INDEX}}", normal_skills_index)
+        rendered = replace_last(rendered, "{{TASK_CONTENT}}", task_content)
+        rendered = replace_last(rendered, "{{TASKS_JSON}}", json.dumps(tasks, ensure_ascii=False, indent=2))
+        rendered = replace_last(rendered, "{{NORMAL_SKILLS_INDEX}}", normal_skills_index)
         return rendered
 
 
 def _validate_normal_action(action: dict[str, Any]) -> None:
     validate(instance=action, schema=_NORMAL_ACTION_SCHEMA)
-
-
-def _replace_last(text: str, old: str, new: str) -> str:
-    head, sep, tail = text.rpartition(old)
-    if not sep:
-        raise ValueError(f"placeholder not found: {old}")
-    return head + new + tail
-
-
-def _merge_invoke_config(
-    base_config: dict[str, Any] | None,
-    *,
-    run_name: str | None = None,
-    tags: list[str] | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    config: dict[str, Any] = dict(base_config or {})
-
-    if run_name:
-        config["run_name"] = run_name
-
-    if tags:
-        existing_tags = config.get("tags", [])
-        if not isinstance(existing_tags, list):
-            existing_tags = []
-        merged_tags: list[str] = []
-        for item in list(existing_tags) + tags:
-            value = str(item).strip()
-            if value and value not in merged_tags:
-                merged_tags.append(value)
-        config["tags"] = merged_tags
-
-    if metadata:
-        existing_metadata = config.get("metadata", {})
-        if not isinstance(existing_metadata, dict):
-            existing_metadata = {}
-        config["metadata"] = {**existing_metadata, **metadata}
-
-    return config
-
 
 def run_normal_task(
     *,

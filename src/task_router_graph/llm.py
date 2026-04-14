@@ -43,7 +43,7 @@ def _is_local_base_url(base_url: str) -> bool:
         host = (urlparse(base_url).hostname or "").strip().lower()
     except Exception:
         return False
-    return host in {"127.0.0.1", "localhost", "0.0.0.0"}
+    return host in {"127.0.0.1", "localhost", "0.0.0.0", "::1"}
 
 
 def _resolve_api_key(*, selected_provider: str, provider_cfg: dict[str, Any], base_url: str) -> str:

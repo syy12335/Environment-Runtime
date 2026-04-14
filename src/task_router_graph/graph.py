@@ -57,8 +57,11 @@ class TaskRouterGraph:
 
         runtime_cfg = self.config.get("runtime", {})
         self._max_controller_steps = int(runtime_cfg.get("max_controller_steps", runtime_cfg.get("max_observe_steps", 3)))
-        self._max_task_turns = int(runtime_cfg.get("max_task_turns", 5))
+        self._max_task_turns = int(runtime_cfg.get("max_task_turns", runtime_cfg.get("max_rounds", 5)))
         self._max_failed_retries = int(runtime_cfg.get("max_failed_retries", 3))
+        default_task_type = str(runtime_cfg.get("default_task_type", "normal")).strip().lower()
+        self._default_task_type = default_task_type if default_task_type in {"normal", "functest", "accutest", "perftest"} else "normal"
+        self._max_normal_steps = int(runtime_cfg.get("max_normal_steps", 4))
         self._run_root = (self.root / self.config["paths"]["run_root"]).resolve()
 
         self._compiled_graph = self._build_graph()
@@ -142,7 +145,7 @@ class TaskRouterGraph:
         task_type = str(state["task"].type).strip().lower()
         if task_type in {"normal", "functest", "accutest", "perftest"}:
             return task_type  # type: ignore[return-value]
-        return "normal"
+        return self._default_task_type  # type: ignore[return-value]
 
     def _normal_step(self, state: GraphState) -> GraphState:
         task, reply, agent_track = normal_node(
@@ -151,6 +154,7 @@ class TaskRouterGraph:
             normal_skills_index=self._normal_skills_index,
             environment=state["environment"],
             task=state["task"],
+            max_steps=self._max_normal_steps,
             invoke_config=self._build_llm_invoke_config(state=state, node="normal"),
         )
         return {"task": task, "reply": reply, "agent_track": agent_track}
@@ -276,11 +280,19 @@ class TaskRouterGraph:
             },
         )
 
-        env = result_state["environment"]
-        task = result_state["task"]
-        reply = result_state["reply"]
+        env = result_state.get("environment")
+        task = result_state.get("task")
+        reply = str(result_state.get("reply", ""))
+        run_dir_value = result_state.get("run_dir")
 
-        run_dir = Path(result_state["run_dir"])
+        if not isinstance(env, Environment):
+            raise KeyError("graph result missing environment")
+        if not isinstance(task, Task):
+            raise KeyError("graph result missing task")
+        if not isinstance(run_dir_value, str) or not run_dir_value.strip():
+            raise KeyError("graph result missing run_dir")
+
+        run_dir = Path(run_dir_value)
         output = Output(
             case_id=case_id,
             task_type=task.type,
@@ -333,7 +345,7 @@ class TaskRouterGraph:
     def _extract_skill_refs(self, index_text: str) -> list[str]:
         # Only treat markdown-path-like tokens as skill references.
         # This avoids mis-parsing command snippets that merely mention .md names.
-        refs = re.findall(r"\x60([A-Za-z0-9_./-]+\\.md)\x60", index_text)
+        refs = re.findall(r"\x60([A-Za-z0-9_./-]+\.md)\x60", index_text)
         seen: set[str] = set()
         ordered_refs: list[str] = []
         for ref in refs:

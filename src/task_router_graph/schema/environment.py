@@ -61,8 +61,6 @@ class Environment:
 
         next_task_id = len(round_item.tasks) + 1
         task_copy.task_id = next_task_id
-        # keep runtime task object aligned with persisted task id
-        task.task_id = next_task_id
 
         record = TaskRecord(
             task_id=next_task_id,

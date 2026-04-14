@@ -7,6 +7,13 @@ from .controller_action import ControllerAction
 from .task import Task
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
 @dataclass
 class TaskRecord:
     # round 内的单任务记录：完整轨迹 -> 执行任务 -> 回复。
@@ -37,7 +44,7 @@ class TaskRecord:
 
         task_payload = payload.get("task", {}) if isinstance(payload.get("task"), dict) else {}
         return cls(
-            task_id=int(payload.get("task_id", 0) or 0),
+            task_id=_safe_int(payload.get("task_id", 0) or 0, 0),
             track=track,
             task=Task.from_dict(task_payload),
             reply=str(payload.get("reply", "")),

@@ -6,7 +6,11 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote_plus
 from urllib.request import Request, urlopen
-from xml.etree import ElementTree
+
+try:
+    from defusedxml import ElementTree as SafeElementTree
+except Exception:  # pragma: no cover - fallback for minimal env
+    from xml.etree import ElementTree as SafeElementTree
 
 from .agents import (
     ControllerRouteError,
@@ -29,7 +33,6 @@ MAX_OBSERVATION_VIEW_WITH_TRACE_TASKS = 5
 MAX_WEB_SEARCH_RESULTS = 5
 MAX_WEB_SEARCH_QUERY_CHARS = 120
 MAX_WEB_SEARCH_HTTP_BYTES = 120000
-NORMAL_AGENT_MAX_STEPS = 4
 ALLOWED_TASK_TYPES = {"normal", "functest", "accutest", "perftest"}
 
 
@@ -42,10 +45,16 @@ def _resolve_observe_path(*, workspace_root: Path, raw_path: str) -> Path:
     if not normalized:
         raise ValueError("observe path is empty")
 
+    workspace = workspace_root.resolve()
     path_obj = Path(normalized)
-    if path_obj.is_absolute():
-        return path_obj
-    return (workspace_root / normalized).resolve()
+    target = path_obj.resolve() if path_obj.is_absolute() else (workspace / normalized).resolve()
+
+    try:
+        target.relative_to(workspace)
+    except ValueError as exc:
+        raise ValueError(f"observe path escapes workspace root: {target}") from exc
+
+    return target
 
 
 def _safe_json_load(path: Path) -> dict[str, Any] | None:
@@ -81,6 +90,15 @@ def _strip_trace_in_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         copied.pop("controller_trace", None)
         copied.pop("track", None)
         sanitized.append(copied)
+    return sanitized
+
+
+def _sanitize_tool_kwargs(kwargs: dict[str, Any], *, reserved: set[str]) -> dict[str, Any]:
+    sanitized: dict[str, Any] = {}
+    for key, value in kwargs.items():
+        if key in reserved:
+            continue
+        sanitized[key] = value
     return sanitized
 
 
@@ -275,7 +293,15 @@ def _tool_read(*, workspace_root: Path, path: str) -> str:
         text = target.read_text(encoding="utf-8")
     except Exception as exc:
         return f"ERROR: read failed for path={target}: {exc}"
-    return text[:MAX_READ_CHARS]
+
+    if len(text) <= MAX_READ_CHARS:
+        return text
+
+    truncated = text[:MAX_READ_CHARS]
+    return (
+        f"{truncated}\n\n"
+        f"[TRUNCATED] file length={len(text)} chars, showing first {MAX_READ_CHARS} chars."
+    )
 
 
 def _tool_ls(*, workspace_root: Path, path: str) -> str:
@@ -514,15 +540,36 @@ def _tool_previous_failed_track(*, environment: Environment, **_: Any) -> str:
 
 def _build_observe_tools(*, workspace_root: Path, environment: Environment) -> dict[str, Callable[..., Any]]:
     return {
-        "read": lambda **kwargs: _tool_read(workspace_root=workspace_root, **kwargs),
-        "ls": lambda **kwargs: _tool_ls(workspace_root=workspace_root, **kwargs),
-        "latest_run_snapshot": lambda **kwargs: _tool_latest_run_snapshot(workspace_root=workspace_root, **kwargs),
-        "recent_tasks": lambda **kwargs: _tool_recent_tasks(workspace_root=workspace_root, **kwargs),
-        "demo_lookup": lambda **kwargs: _tool_demo_lookup(workspace_root=workspace_root, **kwargs),
-        "build_observation_view": lambda **kwargs: _tool_build_observation_view(environment=environment, **kwargs),
-        "previous_failed_track": lambda **kwargs: _tool_previous_failed_track(environment=environment, **kwargs),
-        "beijing_time": lambda **kwargs: _tool_beijing_time(**kwargs),
-        "web_search": lambda **kwargs: _tool_web_search(**kwargs),
+        "read": lambda **kwargs: _tool_read(
+            workspace_root=workspace_root,
+            **_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment"}),
+        ),
+        "ls": lambda **kwargs: _tool_ls(
+            workspace_root=workspace_root,
+            **_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment"}),
+        ),
+        "latest_run_snapshot": lambda **kwargs: _tool_latest_run_snapshot(
+            workspace_root=workspace_root,
+            **_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment"}),
+        ),
+        "recent_tasks": lambda **kwargs: _tool_recent_tasks(
+            workspace_root=workspace_root,
+            **_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment"}),
+        ),
+        "demo_lookup": lambda **kwargs: _tool_demo_lookup(
+            workspace_root=workspace_root,
+            **_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment"}),
+        ),
+        "build_observation_view": lambda **kwargs: _tool_build_observation_view(
+            environment=environment,
+            **_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment"}),
+        ),
+        "previous_failed_track": lambda **kwargs: _tool_previous_failed_track(
+            environment=environment,
+            **_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment"}),
+        ),
+        "beijing_time": lambda **kwargs: _tool_beijing_time(**_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment"})),
+        "web_search": lambda **kwargs: _tool_web_search(**_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment"})),
     }
 
 
@@ -676,6 +723,7 @@ def normal_node(
     normal_skills_index: str,
     environment: Environment,
     task: Task,
+    max_steps: int = 4,
     invoke_config: dict[str, Any] | None = None,
 ) -> tuple[Task, str, list[dict[str, Any]]]:
     skipped = _try_skip_execute(task, stage="normal")
@@ -693,7 +741,7 @@ def normal_node(
         tasks=tasks_context,
         normal_skills_index=normal_skills_index,
         observe_tools=normal_tools,
-        max_steps=NORMAL_AGENT_MAX_STEPS,
+        max_steps=max(1, int(max_steps)),
         invoke_config=invoke_config,
     )
     task.status = str(result.get("task_status", "")).strip()
@@ -711,9 +759,12 @@ def functest_node(*, task: Task) -> tuple[Task, str, list[dict[str, Any]]]:
         skipped_task, skipped_reply = skipped
         return skipped_task, skipped_reply, _build_agent_track(agent="functest", event="skip", task=skipped_task)
 
-    result = run_functest_task(task_content=task.content)
-    task.status = result["task_status"]
-    task.result = result["task_result"]
+    try:
+        result = run_functest_task(task_content=task.content)
+    except Exception as exc:
+        result = {"task_status": "failed", "task_result": f"functest execute error: {exc}"}
+    task.status = str(result.get("task_status", "failed")).strip() or "failed"
+    task.result = str(result.get("task_result", "")).strip()
     reply = ""
     return task, reply, _build_agent_track(agent="functest", event="execute", task=task)
 
@@ -724,9 +775,12 @@ def accutest_node(*, task: Task) -> tuple[Task, str, list[dict[str, Any]]]:
         skipped_task, skipped_reply = skipped
         return skipped_task, skipped_reply, _build_agent_track(agent="accutest", event="skip", task=skipped_task)
 
-    result = run_accutest_task(task_content=task.content)
-    task.status = result["task_status"]
-    task.result = result["task_result"]
+    try:
+        result = run_accutest_task(task_content=task.content)
+    except Exception as exc:
+        result = {"task_status": "failed", "task_result": f"accutest execute error: {exc}"}
+    task.status = str(result.get("task_status", "failed")).strip() or "failed"
+    task.result = str(result.get("task_result", "")).strip()
     reply = ""
     return task, reply, _build_agent_track(agent="accutest", event="execute", task=task)
 
@@ -737,9 +791,12 @@ def perftest_node(*, task: Task) -> tuple[Task, str, list[dict[str, Any]]]:
         skipped_task, skipped_reply = skipped
         return skipped_task, skipped_reply, _build_agent_track(agent="perftest", event="skip", task=skipped_task)
 
-    result = run_perftest_task(task_content=task.content)
-    task.status = result["task_status"]
-    task.result = result["task_result"]
+    try:
+        result = run_perftest_task(task_content=task.content)
+    except Exception as exc:
+        result = {"task_status": "failed", "task_result": f"perftest execute error: {exc}"}
+    task.status = str(result.get("task_status", "failed")).strip() or "failed"
+    task.result = str(result.get("task_result", "")).strip()
     reply = ""
     return task, reply, _build_agent_track(agent="perftest", event="execute", task=task)
 
@@ -916,7 +973,7 @@ def _tool_beijing_time(**_: Any) -> str:
 
 def _parse_bing_rss_results(*, xml_text: str, limit: int) -> list[dict[str, str]]:
     try:
-        root = ElementTree.fromstring(xml_text)
+        root = SafeElementTree.fromstring(xml_text)
     except Exception:
         return []
 
@@ -966,7 +1023,7 @@ def _tool_web_search(*, query: str, limit: int = 3, **_: Any) -> str:
         limit_value = 3
     limit_value = max(1, min(MAX_WEB_SEARCH_RESULTS, limit_value))
 
-    rss_url = f"https://www.bing.com/search?q={quote_plus(query_value)}&format=rss&setlang=zh-Hans"
+    rss_url = f"https://www.bing.com/search?q={quote_plus(query_value)}&format=rss"
 
     try:
         xml_text = _safe_http_get_text(url=rss_url)
@@ -996,8 +1053,8 @@ def _tool_web_search(*, query: str, limit: int = 3, **_: Any) -> str:
 
 def _build_normal_tools() -> dict[str, Callable[..., Any]]:
     return {
-        "beijing_time": lambda **kwargs: _tool_beijing_time(**kwargs),
-        "web_search": lambda **kwargs: _tool_web_search(**kwargs),
+        "beijing_time": lambda **kwargs: _tool_beijing_time(**_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment"})),
+        "web_search": lambda **kwargs: _tool_web_search(**_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment"})),
     }
 
 

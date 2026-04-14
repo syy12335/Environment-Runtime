@@ -304,7 +304,7 @@ st.divider()
 st.subheader("Run History")
 if st.session_state.run_history:
     labels = [
-        f"#{idx + 1} [{item[time]}] case={item[case_id]} status={item[task_status]}"
+        f"#{idx + 1} [{item['time']}] case={item['case_id']} status={item['task_status']}"
         for idx, item in enumerate(st.session_state.run_history)
     ]
     selected = st.selectbox("History Items", options=list(range(len(labels))), format_func=lambda i: labels[i], index=len(labels) - 1)

@@ -7,7 +7,7 @@
 你只允许使用以下输入：
 
 1. `USER_INPUT`
-2. `TASKS_JSON`（默认 observation view，包含 `cur_round` 与 `tasks`；默认不包含 `track`）
+2. `TASKS_JSON`（默认 observation view，包含 `cur_round` 与 `tasks`；默认不包含 `track`。失败场景可能带 `previous_failed_task` 摘要）
 3. `SKILLS_INDEX`
 
 你必须把 `SKILLS_INDEX` 视为 task taxonomy、reference 路由与 `task_content` 生成条件的唯一知识来源。
@@ -19,6 +19,12 @@
 - `previous_failed_track {}`：返回上一失败 task 的完整 track（包含 controller + 执行 agent）
 
 不得假设该信息已注入 `TASKS_JSON`；必须显式调用工具获取。
+
+### `previous_failed_task`（来自 TASKS_JSON）
+
+- 当存在该字段时，它是上一失败任务的摘要（不含完整 track）。
+- 可用于快速判断是否进入失败重试语境。
+- 若需要完整失败轨迹，仍必须调用 `previous_failed_track {}`。
 
 ## `task_content` 语义（核心定义）
 
@@ -53,7 +59,7 @@ controller 阶段不要求补齐：
 - `latest_run_snapshot`：`{"task_type":"normal|functest|accutest|perftest(可选)","include_trace":false}`
 - `recent_tasks`：`{"limit":5,"task_type":"...","status":"done|failed","include_trace":false}`
 - `demo_lookup`：`{"key":"normal.latest_summary"}`（读取 mock demo 数据）
-- `build_observation_view`：`{"task_limit":3,"include_trace":true,"include_user_input":false,"include_task":false,"include_reply":false}`（按需读取 environment 轨迹补充）
+- `build_observation_view`：`{"task_limit":3,"include_trace":false,"include_user_input":false,"include_task":false,"include_reply":false}`（按需读取 environment 视图；必要时再开启 trace）
 - `previous_failed_track`：`{}`（仅用于失败重试时读取上一失败轨迹）
 - `beijing_time`：`{}`（获取当前北京时间）
 - `web_search`：`{"query":"...","limit":3}`（上网检索公开信息，仅在外部时效事实缺失时使用）
