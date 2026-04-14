@@ -2,19 +2,21 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import streamlit as st
 import yaml
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from task_router_graph import TaskRouterGraph
 from task_router_graph.llm import resolve_provider_and_model
+from task_router_graph.schema import Environment, RoundRecord
 
 
 st.set_page_config(page_title="Task Router Graph", layout="wide")
@@ -53,6 +55,113 @@ def _load_graph(config_path_text: str) -> TaskRouterGraph:
     return TaskRouterGraph(config_path=config_path_text)
 
 
+def _extract_task_rows(environment: dict[str, Any]) -> list[dict[str, Any]]:
+    rounds = environment.get("rounds", []) if isinstance(environment, dict) else []
+    task_rows: list[dict[str, Any]] = []
+    if not isinstance(rounds, list):
+        return task_rows
+
+    for round_item in rounds:
+        if not isinstance(round_item, dict):
+            continue
+        round_id = round_item.get("round_id")
+        user_input = str(round_item.get("user_input", ""))
+        tasks = round_item.get("tasks", [])
+        if not isinstance(tasks, list):
+            continue
+
+        for task_item in tasks:
+            if not isinstance(task_item, dict):
+                continue
+            task = task_item.get("task", {}) if isinstance(task_item.get("task"), dict) else {}
+            track = task_item.get("track", []) if isinstance(task_item.get("track"), list) else []
+            task_rows.append(
+                {
+                    "round_id": round_id,
+                    "task_id": task_item.get("task_id"),
+                    "task_type": task.get("type", ""),
+                    "task_status": task.get("status", ""),
+                    "task_result": task.get("result", ""),
+                    "trace_count": len(track),
+                    "exec_reply": task_item.get("reply", ""),
+                    "user_input": user_input,
+                }
+            )
+
+    return task_rows
+
+
+def _extract_last_task(environment: dict[str, Any]) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    rounds = environment.get("rounds", []) if isinstance(environment, dict) else []
+    if not isinstance(rounds, list) or not rounds:
+        return None, []
+
+    last_round = rounds[-1]
+    if not isinstance(last_round, dict):
+        return None, []
+
+    tasks = last_round.get("tasks", [])
+    if not isinstance(tasks, list) or not tasks:
+        return None, []
+
+    last_task = tasks[-1]
+    if not isinstance(last_task, dict):
+        return None, []
+
+    track = last_task.get("track", []) if isinstance(last_task.get("track"), list) else []
+    normalized_track = [item for item in track if isinstance(item, dict)]
+    return last_task, normalized_track
+
+
+def _track_event(step: dict[str, Any]) -> str:
+    event = str(step.get("event", "")).strip()
+    if event:
+        return event
+    return str(step.get("action_kind", "")).strip()
+
+
+def _render_track(track: list[dict[str, Any]]) -> None:
+    st.subheader("Latest Task Track")
+    if not track:
+        st.info("当前 task 无轨迹。")
+        return
+
+    rows: list[dict[str, Any]] = []
+    for idx, step in enumerate(track, start=1):
+        rows.append(
+            {
+                "step": idx,
+                "agent": str(step.get("agent", "")),
+                "event": _track_event(step),
+                "reason": str(step.get("reason", "")),
+                "tool": str(step.get("tool", "")),
+                "task_status": str(step.get("task_status", "")),
+                "task_result": str(step.get("task_result", "")),
+            }
+        )
+
+    st.dataframe(rows, use_container_width=True, hide_index=True)
+
+    with st.expander("Track Details", expanded=False):
+        for idx, step in enumerate(track, start=1):
+            title = f"step#{idx} | {step.get('agent', '')} | {_track_event(step)}"
+            with st.container(border=True):
+                st.markdown(f"**{title}**")
+                st.json(step)
+
+
+def _render_environment_show_text(environment: dict[str, Any]) -> None:
+    rounds_payload = environment.get("rounds", []) if isinstance(environment, dict) else []
+    rounds = [RoundRecord.from_dict(item) for item in rounds_payload if isinstance(item, dict)]
+    env = Environment(rounds=rounds)
+
+    updated_at = environment.get("updated_at") if isinstance(environment, dict) else None
+    if isinstance(updated_at, str) and updated_at.strip():
+        env.updated_at = updated_at
+
+    st.code(env.show_environment(show_trace=True), language="text")
+
+
 def _render_result(result: dict[str, Any]) -> None:
     output = result.get("output", {}) if isinstance(result, dict) else {}
     environment = result.get("environment", {}) if isinstance(result, dict) else {}
@@ -62,53 +171,56 @@ def _render_result(result: dict[str, Any]) -> None:
     col2.metric("task_status", str(output.get("task_status", "")))
     col3.metric("run_dir", str(output.get("run_dir", "")))
 
-    st.subheader("Reply")
-    st.write(str(output.get("reply", "")))
+    reply_col, result_col = st.columns(2)
+    with reply_col:
+        st.subheader("Final Reply")
+        st.write(str(output.get("reply", "")))
+    with result_col:
+        st.subheader("Task Result")
+        st.write(str(output.get("task_result", "")))
 
-    st.subheader("Output")
-    st.json(output)
+    last_task, last_track = _extract_last_task(environment=environment)
+    if last_task is not None:
+        task_payload = last_task.get("task", {}) if isinstance(last_task.get("task"), dict) else {}
+        st.caption(
+            "latest_task="
+            f"#{last_task.get('task_id')} | "
+            f"type={task_payload.get('type', '')} | "
+            f"status={task_payload.get('status', '')}"
+        )
 
-    rounds = environment.get("rounds", []) if isinstance(environment, dict) else []
-    task_rows: list[dict[str, Any]] = []
-    if isinstance(rounds, list):
-        for round_item in rounds:
-            if not isinstance(round_item, dict):
-                continue
-            round_id = round_item.get("round_id")
-            user_input = round_item.get("user_input", "")
-            tasks = round_item.get("tasks", [])
-            if not isinstance(tasks, list):
-                continue
-            for task_item in tasks:
-                if not isinstance(task_item, dict):
-                    continue
-                task = task_item.get("task", {}) if isinstance(task_item.get("task"), dict) else {}
-                track = task_item.get("track", []) if isinstance(task_item.get("track"), list) else []
-                task_rows.append(
-                    {
-                        "round_id": round_id,
-                        "task_id": task_item.get("task_id"),
-                        "task_type": task.get("type", ""),
-                        "task_status": task.get("status", ""),
-                        "task_result": task.get("result", ""),
-                        "trace_count": len(track),
-                        "reply": task_item.get("reply", ""),
-                        "user_input": user_input,
-                    }
-                )
-
+    task_rows = _extract_task_rows(environment=environment)
     st.subheader("Round Tasks")
     if task_rows:
         st.dataframe(task_rows, use_container_width=True, hide_index=True)
     else:
         st.info("当前没有可展示的任务记录。")
 
+    _render_track(last_track)
+
+    with st.expander("Output JSON", expanded=False):
+        st.json(output)
+
     with st.expander("Environment JSON", expanded=False):
         st.json(environment)
+
+    with st.expander("Environment.show_environment(show_trace=True)", expanded=False):
+        _render_environment_show_text(environment)
 
     with st.expander("Raw JSON", expanded=False):
         st.code(json.dumps(result, ensure_ascii=False, indent=2), language="json")
 
+
+def _run_graph(*, config_path: Path, case_id: str, user_input: str) -> dict[str, Any]:
+    with st.spinner("Graph 初始化中..."):
+        graph = _load_graph(str(config_path))
+
+    with st.spinner("任务执行中..."):
+        return graph.run(case_id=case_id, user_input=user_input)
+
+
+if "run_history" not in st.session_state:
+    st.session_state.run_history = []
 
 with st.sidebar:
     st.header("Run Config")
@@ -146,13 +258,15 @@ if mode == "Case File":
 
             case_payload = json.loads(case_path.read_text(encoding="utf-8"))
             case_id, user_input = _validate_case_payload(case_payload)
-
-            with st.spinner("Graph 初始化中..."):
-                graph = _load_graph(str(config_path))
-
-            with st.spinner("Case 执行中..."):
-                result = graph.run(case_id=case_id, user_input=user_input)
-
+            result = _run_graph(config_path=config_path, case_id=case_id, user_input=user_input)
+            st.session_state.run_history.append(
+                {
+                    "time": datetime.now().strftime("%H:%M:%S"),
+                    "case_id": case_id,
+                    "task_status": str(result.get("output", {}).get("task_status", "")),
+                    "result": result,
+                }
+            )
             _render_result(result)
         except Exception as exc:
             st.error(f"运行失败: {exc}")
@@ -172,13 +286,29 @@ else:
             if not user_input:
                 raise ValueError("请输入 User Input")
 
-            with st.spinner("Graph 初始化中..."):
-                graph = _load_graph(str(config_path))
-
-            with st.spinner("任务执行中..."):
-                result = graph.run(case_id=case_id, user_input=user_input)
-
+            result = _run_graph(config_path=config_path, case_id=case_id, user_input=user_input)
+            st.session_state.run_history.append(
+                {
+                    "time": datetime.now().strftime("%H:%M:%S"),
+                    "case_id": case_id,
+                    "task_status": str(result.get("output", {}).get("task_status", "")),
+                    "result": result,
+                }
+            )
             _render_result(result)
         except Exception as exc:
             st.error(f"运行失败: {exc}")
             st.exception(exc)
+
+st.divider()
+st.subheader("Run History")
+if st.session_state.run_history:
+    labels = [
+        f"#{idx + 1} [{item[time]}] case={item[case_id]} status={item[task_status]}"
+        for idx, item in enumerate(st.session_state.run_history)
+    ]
+    selected = st.selectbox("History Items", options=list(range(len(labels))), format_func=lambda i: labels[i], index=len(labels) - 1)
+    if st.button("Render Selected Result"):
+        _render_result(st.session_state.run_history[selected]["result"])
+else:
+    st.caption("暂无历史运行记录。")
