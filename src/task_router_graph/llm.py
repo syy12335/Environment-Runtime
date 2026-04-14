@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from typing import Any
+from urllib.parse import urlparse
 
 
 def resolve_provider_and_model(config: dict[str, Any]) -> tuple[str, str]:
@@ -37,6 +38,35 @@ def resolve_provider_and_model(config: dict[str, Any]) -> tuple[str, str]:
     return selected_provider, model_name
 
 
+def _is_local_base_url(base_url: str) -> bool:
+    try:
+        host = (urlparse(base_url).hostname or "").strip().lower()
+    except Exception:
+        return False
+    return host in {"127.0.0.1", "localhost", "0.0.0.0"}
+
+
+def _resolve_api_key(*, selected_provider: str, provider_cfg: dict[str, Any], base_url: str) -> str:
+    api_key_env = str(provider_cfg.get("api_key_env", "")).strip()
+    api_key = os.getenv(api_key_env) if api_key_env else ""
+    if api_key:
+        return api_key
+
+    explicit_api_key = str(provider_cfg.get("api_key", "")).strip()
+    if explicit_api_key:
+        return explicit_api_key
+
+    allow_missing = bool(provider_cfg.get("allow_missing_api_key", False))
+    if allow_missing or selected_provider == "sglang" or _is_local_base_url(base_url):
+        # 本地 OpenAI-compatible 服务通常不做鉴权；统一回退占位 key。
+        return "EMPTY"
+
+    if api_key_env:
+        raise ValueError(f"Missing required environment variable: {api_key_env}")
+
+    raise ValueError(f"Provider {selected_provider} missing api_key_env")
+
+
 def build_chat_model(config: dict[str, Any]) -> Any:
     # 延迟导入，避免在纯数据处理场景下强依赖 langchain-openai。
     from langchain_openai import ChatOpenAI
@@ -47,17 +77,15 @@ def build_chat_model(config: dict[str, Any]) -> Any:
     providers = model_cfg["providers"]
     provider_cfg = providers[selected_provider]
 
-    api_key_env = str(provider_cfg.get("api_key_env", "")).strip()
-    if not api_key_env:
-        raise ValueError(f"Provider {selected_provider} missing api_key_env")
-
-    api_key = os.getenv(api_key_env)
-    if not api_key:
-        raise ValueError(f"Missing required environment variable: {api_key_env}")
-
     base_url = str(provider_cfg.get("base_url", "")).strip()
     if not base_url:
         raise ValueError(f"Provider {selected_provider} missing base_url")
+
+    api_key = _resolve_api_key(
+        selected_provider=selected_provider,
+        provider_cfg=provider_cfg,
+        base_url=base_url,
+    )
 
     temperature = float(model_cfg.get("temperature", provider_cfg.get("temperature", 0)))
 
