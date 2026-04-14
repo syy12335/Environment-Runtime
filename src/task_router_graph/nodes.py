@@ -521,6 +521,8 @@ def _build_observe_tools(*, workspace_root: Path, environment: Environment) -> d
         "demo_lookup": lambda **kwargs: _tool_demo_lookup(workspace_root=workspace_root, **kwargs),
         "build_observation_view": lambda **kwargs: _tool_build_observation_view(environment=environment, **kwargs),
         "previous_failed_track": lambda **kwargs: _tool_previous_failed_track(environment=environment, **kwargs),
+        "beijing_time": lambda **kwargs: _tool_beijing_time(**kwargs),
+        "web_search": lambda **kwargs: _tool_web_search(**kwargs),
     }
 
 

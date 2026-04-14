@@ -44,6 +44,8 @@
 - `demo_lookup {"key":"normal.latest_summary"}`
 - `build_observation_view {"task_limit":3,"include_trace":true,"include_user_input":false,"include_task":false,"include_reply":false}`（按需读取 environment 轨迹补充）
 - `previous_failed_track {}`（失败重试时读取上一失败 task 的 track）
+- `beijing_time {}`（获取当前北京时间）
+- `web_search {"query":"...","limit":3}`（上网检索公开信息，仅在需要外部时效事实时使用）
 
 ## task_type 与 reference 映射
 

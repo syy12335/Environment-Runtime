@@ -55,6 +55,8 @@ controller 阶段不要求补齐：
 - `demo_lookup`：`{"key":"normal.latest_summary"}`（读取 mock demo 数据）
 - `build_observation_view`：`{"task_limit":3,"include_trace":true,"include_user_input":false,"include_task":false,"include_reply":false}`（按需读取 environment 轨迹补充）
 - `previous_failed_track`：`{}`（仅用于失败重试时读取上一失败轨迹）
+- `beijing_time`：`{}`（获取当前北京时间）
+- `web_search`：`{"query":"...","limit":3}`（上网检索公开信息，仅在外部时效事实缺失时使用）
 
 ## Observe 决策顺序（硬规则）
 
@@ -120,6 +122,17 @@ controller 阶段不要求补齐：
 - 默认将 `include_user_input=false`、`include_task=false`、`include_reply=false`。
 - sub agent 的轨迹不一定有价值，但上下文开销通常很大；仅在必要时设置 `include_trace=true`。
 
+### `beijing_time`
+
+- 用于读取当前北京时间。
+- 仅在任务明确需要当前时间时调用，避免无意义查询。
+
+### `web_search`
+
+- 用于检索公开网页信息（高成本、噪声较大）。
+- 仅在任务依赖外部时效事实且上下文不足时调用。
+- 查询词应具体、可验证，不得滥用。
+
 ## 场景化步骤（必须遵守）
 
 1. `请帮我做一次 anthropic_ver_1 的功能测试`
@@ -163,7 +176,7 @@ controller 阶段不要求补齐：
 ```json
 {
   "action_kind": "observe|generate_task",
-  "tool": "read|ls|latest_run_snapshot|recent_tasks|demo_lookup|previous_failed_track|build_observation_view",
+  "tool": "read|ls|latest_run_snapshot|recent_tasks|demo_lookup|previous_failed_track|build_observation_view|beijing_time|web_search",
   "args": {},
   "task_type": "normal|functest|accutest|perftest",
   "task_content": "一句最小可执行任务描述",
