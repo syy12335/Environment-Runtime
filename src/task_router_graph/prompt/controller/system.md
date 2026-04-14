@@ -53,6 +53,7 @@ controller 阶段不要求补齐：
 - `latest_run_snapshot`：`{"task_type":"normal|functest|accutest|perftest(可选)","include_trace":false}`
 - `recent_tasks`：`{"limit":5,"task_type":"...","status":"done|failed","include_trace":false}`
 - `demo_lookup`：`{"key":"normal.latest_summary"}`（读取 mock demo 数据）
+- `build_observation_view`：`{"task_limit":3,"include_trace":true,"include_user_input":false,"include_task":false,"include_reply":false}`（按需读取 environment 轨迹补充）
 - `previous_failed_track`：`{}`（仅用于失败重试时读取上一失败轨迹）
 
 ## Observe 决策顺序（硬规则）
@@ -71,6 +72,10 @@ controller 阶段不要求补齐：
 3. 如果 task_type 明确且对象明确，且请求不显式依赖外部环境事实：
    - 应优先生成面向该对象的 `task_content` target；
    - 不应继续为了“补配置”而默认 observe 文件系统。
+
+4. 需要看环境任务摘要时可调用 `build_observation_view`；
+   - 不要默认用 `build_observation_view(include_trace=true)` 拉全量轨迹。
+   - 如果仅需失败轨迹，优先使用 `previous_failed_track {}`，而不是全量拉取 `build_observation_view(include_trace=true)`。
 
 ## 工具边界（硬规则）
 
@@ -107,6 +112,13 @@ controller 阶段不要求补齐：
 
 - 仅在失败重试场景使用。
 - 用于读取上一失败 task 的完整轨迹，避免重复失败路径。
+
+### `build_observation_view`
+
+- 用于按需读取当前 environment 视图。
+- `USER_INPUT` 与 `TASKS_JSON` 已在 system 注入，避免重复拉取同类字段。
+- 默认将 `include_user_input=false`、`include_task=false`、`include_reply=false`。
+- sub agent 的轨迹不一定有价值，但上下文开销通常很大；仅在必要时设置 `include_trace=true`。
 
 ## 场景化步骤（必须遵守）
 
@@ -151,7 +163,7 @@ controller 阶段不要求补齐：
 ```json
 {
   "action_kind": "observe|generate_task",
-  "tool": "read|ls|latest_run_snapshot|recent_tasks|demo_lookup|previous_failed_track",
+  "tool": "read|ls|latest_run_snapshot|recent_tasks|demo_lookup|previous_failed_track|build_observation_view",
   "args": {},
   "task_type": "normal|functest|accutest|perftest",
   "task_content": "一句最小可执行任务描述",

@@ -19,6 +19,7 @@
 
 2. 缺外部环境事实（历史 run、报告、用户明确文件、具体产物）：
    - 优先 `latest_run_snapshot` / `recent_tasks`。
+   - 需要当前 environment 摘要时可用 `build_observation_view`。
    - 只有路径明确且工具结果不足时，才允许 `read/ls` 文件系统。
 
 ### `ls` 约束
@@ -41,6 +42,7 @@
 - `latest_run_snapshot {"task_type":"...","include_trace":false}`
 - `recent_tasks {"limit":5,"task_type":"...","status":"done|failed","include_trace":false}`
 - `demo_lookup {"key":"normal.latest_summary"}`
+- `build_observation_view {"task_limit":3,"include_trace":true,"include_user_input":false,"include_task":false,"include_reply":false}`（按需读取 environment 轨迹补充）
 - `previous_failed_track {}`（失败重试时读取上一失败 task 的 track）
 
 ## task_type 与 reference 映射
@@ -105,3 +107,16 @@ Reference：`accutest-task.md`
 定位：性能测试任务，用于评估延迟、吞吐、并发、压测表现。
 
 Reference：`perftest-task.md`
+
+
+## 轨迹成本提醒
+
+- `build_observation_view(include_trace=true)` 会显著增加上下文体积。
+- sub agent 的轨迹不一定有价值，但上下文开销通常很大，必要时才使用。
+
+
+## build_observation_view 的推荐参数
+
+- 因 `USER_INPUT` 与 `TASKS_JSON` 已注入，默认设置：`include_user_input=false`、`include_task=false`、`include_reply=false`。
+- 仅在必要时启用：`include_trace=true`。
+- 若只需失败轨迹，优先 `previous_failed_track {}`。

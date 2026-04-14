@@ -18,6 +18,8 @@ MAX_LIST_ENTRIES = 200
 MAX_READ_CHARS = 8000
 MAX_RECENT_TASKS = 20
 MAX_RUN_SCAN = 200
+MAX_OBSERVATION_VIEW_TASKS = 20
+MAX_OBSERVATION_VIEW_WITH_TRACE_TASKS = 5
 ALLOWED_TASK_TYPES = {"normal", "functest", "accutest", "perftest"}
 
 
@@ -453,6 +455,49 @@ def _tool_demo_lookup(*, workspace_root: Path, key: str = "") -> str:
     )
 
 
+def _tool_build_observation_view(
+    *,
+    environment: Environment,
+    task_limit: int | None = 5,
+    include_user_input: bool = True,
+    include_task: bool = True,
+    include_reply: bool = True,
+    include_trace: bool = False,
+    **_: Any,
+) -> str:
+    include_trace_value = _to_bool(include_trace)
+    include_user_input_value = _to_bool(include_user_input)
+    include_task_value = _to_bool(include_task)
+    include_reply_value = _to_bool(include_reply)
+
+    if task_limit is None:
+        task_limit_value: int | None = None
+    else:
+        try:
+            task_limit_value = int(task_limit)
+        except Exception:
+            task_limit_value = 5
+
+    if task_limit_value is not None:
+        max_limit = MAX_OBSERVATION_VIEW_WITH_TRACE_TASKS if include_trace_value else MAX_OBSERVATION_VIEW_TASKS
+        task_limit_value = max(1, min(max_limit, task_limit_value))
+
+    payload = environment.build_observation_view(
+        task_limit=task_limit_value,
+        include_user_input=include_user_input_value,
+        include_task=include_task_value,
+        include_reply=include_reply_value,
+        include_trace=include_trace_value,
+    )
+
+    if include_trace_value:
+        payload["trace_usage_note"] = (
+            "track payload may be large and low-signal for sub agents; prefer include_trace=false unless strictly necessary"
+        )
+
+    return _json_dump(payload)
+
+
 def _tool_previous_failed_track(*, environment: Environment, **_: Any) -> str:
     return _json_dump(environment.get_previous_failed_track_view())
 
@@ -464,6 +509,7 @@ def _build_observe_tools(*, workspace_root: Path, environment: Environment) -> d
         "latest_run_snapshot": lambda **kwargs: _tool_latest_run_snapshot(workspace_root=workspace_root, **kwargs),
         "recent_tasks": lambda **kwargs: _tool_recent_tasks(workspace_root=workspace_root, **kwargs),
         "demo_lookup": lambda **kwargs: _tool_demo_lookup(workspace_root=workspace_root, **kwargs),
+        "build_observation_view": lambda **kwargs: _tool_build_observation_view(environment=environment, **kwargs),
         "previous_failed_track": lambda **kwargs: _tool_previous_failed_track(environment=environment, **kwargs),
     }
 
