@@ -9,7 +9,7 @@
 
 ## Graph 主流程（最新）
 
-`init -> route -> (normal|functest|accutest|perftest) -> update -> (failure_diagnose | route | final_reply) -> end`
+`init -> route -> (executor|functest|accutest|perftest) -> update -> (failure_diagnose | route | final_reply) -> end`
 
 关键分支规则：
 
@@ -31,7 +31,7 @@
 - 输出：`Task + controller_trace`
 - 观察工具含：`build_observation_view`、`previous_failed_track` 等
 
-### execute（normal/functest/accutest/perftest）
+### execute（executor/functest/accutest/perftest）
 
 - Execute nodes only run the task and do not compose final user-facing reply.
 - Unified output semantics: update only `task_status` and `task_result`.
@@ -59,7 +59,7 @@
 
 ## 关键语义口径
 
-1. `task_result` 归执行链负责（normal/test/diagnoser）。
+1. `task_result` 归执行链负责（executor/test/diagnoser）。
 2. `output.reply` 归 `reply agent` 负责（round 结束统一生成）。
 3. `TaskRecord.reply` 是执行阶段回执字段；当前可为空字符串，不等同最终用户回复。
 4. `track` 是统一轨迹字段，不再使用 `controller_trace` 作为持久化主字段。

@@ -10,7 +10,7 @@
 
 当前仓库已支持四类任务：
 
-- `normal`
+- `executor`
 - `functest`
 - `accutest`
 - `perftest`
@@ -24,7 +24,7 @@
 ```text
 init
   -> route
-  -> (normal | functest | accutest | perftest)
+  -> (executor | functest | accutest | perftest)
   -> update
   -> (failure_diagnose | route | final_reply)
   -> end
@@ -41,7 +41,7 @@ init
 
 - `init`：初始化本次运行状态，创建 round，准备运行目录
 - `route`：由 controller 判断是否继续观察，或直接生成下一步 task
-- `normal / functest / accutest / perftest`：执行对应类型的任务
+- `executor / functest / accutest / perftest`：执行对应类型的任务
 - `update`：将本轮 task、结果与轨迹写回 environment
 - `failure_diagnose`：在失败且仍可重试时分析原因，并回到路由节点
 - `final_reply`：在 round 结束时统一生成最终回复
@@ -66,10 +66,10 @@ init
 
 - `graph.py`：LangGraph 主流程定义
 - `nodes.py`：各节点执行逻辑封装
-- `agents/`：controller/normal/test/diagnosis/reply 等 agent
+- `agents/`：controller/executor/test/diagnosis/reply 等 agent
 - `schema/`：Task、Environment、Output 等数据结构
 - `prompt/`：各节点使用的 prompt
-- `skills/`：controller 与 normal 的 skills index / reference
+- `skills/`：controller 与 executor 的 skills index / reference
 
 ## 快速开始
 

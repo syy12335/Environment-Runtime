@@ -1,4 +1,4 @@
-"""Async workflow module aggregation for non-normal task executors."""
+"""Async workflow module aggregation for non-executor task executors."""
 
 from .accutest_async_workflow import AccutestAsyncWorkflow, run_accutest_async_workflow
 from .functest_async_workflow import FunctestAsyncWorkflow, run_functest_async_workflow

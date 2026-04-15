@@ -20,7 +20,7 @@
 ```json
 {
   "case_id": "case_01",
-  "task_type": "normal|functest|accutest|perftest",
+  "task_type": "executor|functest|accutest|perftest",
   "task_status": "done|failed|...",
   "task_result": "执行链最终任务结果",
   "reply": "最终面向用户回复（由 reply agent 生成）",
@@ -30,7 +30,7 @@
 
 说明：
 
-- `task_result` 由执行链写入（normal/test/diagnoser）。
+- `task_result` 由执行链写入（executor/test/diagnoser）。
 - `reply` 由 `final_reply` 节点统一生成。
 
 ## 3. Environment Full State（落盘）
@@ -55,7 +55,7 @@
           "task_id": 1,
           "task": {
             "task_id": 1,
-            "type": "normal",
+            "type": "executor",
             "content": "根据当前问候场景，提供系统使用引导与功能说明",
             "status": "done",
             "result": "您好！欢迎使用本系统..."
@@ -66,7 +66,7 @@
               "agent": "controller",
               "action_kind": "observe",
               "tool": "read",
-              "args": {"path": "src/task_router_graph/skills/controller/normal-task.md"},
+              "args": {"path": "src/task_router_graph/skills/controller/executor-task.md"},
               "observation": "...",
               "reason": "...",
               "return": "..."
@@ -74,16 +74,16 @@
             {
               "agent": "controller",
               "action_kind": "generate_task",
-              "task_type": "normal",
+              "task_type": "executor",
               "task_content": "根据当前问候场景，提供系统使用引导与功能说明",
               "reason": "...",
               "return": {
-                "task_type": "normal",
+                "task_type": "executor",
                 "task_content": "根据当前问候场景，提供系统使用引导与功能说明"
               }
             },
             {
-              "agent": "normal",
+              "agent": "executor",
               "event": "execute",
               "task_status": "done",
               "task_result": "您好！欢迎使用本系统...",

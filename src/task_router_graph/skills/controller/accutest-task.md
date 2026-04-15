@@ -14,9 +14,9 @@
 1. 执行评估（不是解释）
    - `read accutest-task.md` -> `generate_task(accutest)`
 
-2. 历史评分解释请求（通常应路由到 normal）
+2. 历史评分解释请求（通常应路由到 executor）
    - 示例：`请解释上一轮 accutest 的评分含义`
-   - 步骤：`read normal-task.md` -> `build_observation_view(task_limit=5, include_task=true, include_trace=false)` -> `generate_task(normal)`
+   - 步骤：`read executor-task.md` -> `build_observation_view(task_limit=5, include_task=true, include_trace=false)` -> `generate_task(executor)`
 
 ## 最小信息要求
 

@@ -56,16 +56,16 @@
             },
             {
               "action_kind": "generate_task",
-              "reason": "生成 normal 建议任务",
+              "reason": "生成 executor 建议任务",
               "tool": null,
               "args": {},
-              "task_type": "normal",
+              "task_type": "executor",
               "task_content": "根据本轮 functest 结果给出修复建议",
               "observation": null
             }
           ],
           "task": {
-            "type": "normal",
+            "type": "executor",
             "content": "根据本轮 functest 结果给出修复建议",
             "status": "pending",
             "result": ""

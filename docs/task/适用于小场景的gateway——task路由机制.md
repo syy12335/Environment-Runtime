@@ -16,7 +16,7 @@ Environment full state 口径固定为 rounds + cur_round + updated_at。
 ### 1.3 Task 对象
 
 - task_id：任务编号（在 round 内递增）
-- type：任务类型，例如 normal、functest
+- type：任务类型，例如 executor、functest
 - content：执行目标
 - status：任务状态，pending/running/done/failed
 - result：执行结果摘要
@@ -71,7 +71,7 @@ Environment full state 示例：
 - 已取消“把失败原因拼进下一次 task_content”的做法。
 - `track` 取代 `controller_trace`，统一记录一个 task 的全轨迹：
   - controller 的 observe / generate_task 轨迹
-  - 执行 agent（normal/functest/accutest/perftest）的执行结果轨迹
+  - 执行 agent（executor/functest/accutest/perftest）的执行结果轨迹
 
 ### 3.2 controller failed-input strategy
 

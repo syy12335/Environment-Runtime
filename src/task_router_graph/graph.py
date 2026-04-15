@@ -59,9 +59,9 @@ class TaskRouterGraph:
         self._max_controller_steps = int(runtime_cfg.get("max_controller_steps", runtime_cfg.get("max_observe_steps", 3)))
         self._max_task_turns = int(runtime_cfg.get("max_task_turns", runtime_cfg.get("max_rounds", 5)))
         self._max_failed_retries = int(runtime_cfg.get("max_failed_retries", 3))
-        default_task_type = str(runtime_cfg.get("default_task_type", "normal")).strip().lower()
-        self._default_task_type = default_task_type if default_task_type in {"normal", "functest", "accutest", "perftest"} else "normal"
-        self._max_executor_steps = int(runtime_cfg.get("max_executor_steps", runtime_cfg.get("max_normal_steps", 4)))
+        default_task_type = str(runtime_cfg.get("default_task_type", "executor")).strip().lower()
+        self._default_task_type = default_task_type if default_task_type in {"executor", "functest", "accutest", "perftest"} else "executor"
+        self._max_executor_steps = int(runtime_cfg.get("max_executor_steps", 4))
         self._run_root = (self.root / self.config["paths"]["run_root"]).resolve()
 
         self._compiled_graph = self._build_graph()
@@ -143,11 +143,11 @@ class TaskRouterGraph:
 
     def _pick_execute_node(self, state: GraphState) -> Literal["executor", "functest", "accutest", "perftest"]:
         task_type = str(state["task"].type).strip().lower()
-        if task_type == "normal":
+        if task_type == "executor":
             return "executor"
         if task_type in {"functest", "accutest", "perftest"}:
             return task_type  # type: ignore[return-value]
-        if self._default_task_type == "normal":
+        if self._default_task_type == "executor":
             return "executor"
         return self._default_task_type  # type: ignore[return-value]
 

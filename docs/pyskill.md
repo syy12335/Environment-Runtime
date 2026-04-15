@@ -31,7 +31,7 @@ PySkill 不是新的 `task_type`，而是 **task 的一种执行形态**。
 
 也就是说：
 
-- `task.type` 仍然保持原有语义：`normal / functest / accutest / perftest`
+- `task.type` 仍然保持原有语义：`executor / functest / accutest / perftest`
 - PySkill 决定的是：该 task 是否通过一个可执行的、稳定的 workflow 来完成
 - environment 关心的不是 PySkill 的 Python 实现细节，而是：
   - 当前任务是否已被派发

@@ -33,7 +33,7 @@ MAX_OBSERVATION_VIEW_WITH_TRACE_TASKS = 5
 MAX_WEB_SEARCH_RESULTS = 5
 MAX_WEB_SEARCH_QUERY_CHARS = 120
 MAX_WEB_SEARCH_HTTP_BYTES = 120000
-ALLOWED_TASK_TYPES = {"normal", "functest", "accutest", "perftest"}
+ALLOWED_TASK_TYPES = {"executor", "functest", "accutest", "perftest"}
 
 
 def _json_dump(payload: Any) -> str:
@@ -228,7 +228,7 @@ def _build_controller_trace(route_result: dict[str, Any]) -> list[ControllerActi
 
 def _build_route_failed_task(*, user_input: str, reason: str) -> Task:
     message = f"route failed: {reason}"
-    return Task(type="normal", content=user_input, status="failed", result=message)
+    return Task(type="executor", content=user_input, status="failed", result=message)
 
 
 def _try_skip_execute(task: Task, *, stage: str) -> tuple[Task, str] | None:
@@ -568,7 +568,7 @@ def _safe_http_get_text(*, url: str, timeout_sec: float = 10.0, max_bytes: int =
     request = Request(
         url,
         headers={
-            "User-Agent": "task-routing-normal-agent/1.0 (+https://example.local)",
+            "User-Agent": "task-routing-executor-agent/1.0 (+https://example.local)",
             "Accept": "application/rss+xml, application/xml, text/xml, text/plain, */*",
         },
     )

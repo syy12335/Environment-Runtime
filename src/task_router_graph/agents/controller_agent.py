@@ -29,7 +29,7 @@ _CONTROLLER_ACTION_SCHEMA: dict[str, Any] = {
                 "action_kind": {"const": "generate_task"},
                 "task_type": {
                     "type": "string",
-                    "enum": ["normal", "functest", "accutest", "perftest"],
+                    "enum": ["executor", "functest", "accutest", "perftest"],
                 },
                 "task_content": {"type": "string", "minLength": 1},
                 "reason": {"type": "string", "minLength": 1},

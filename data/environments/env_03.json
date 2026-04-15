@@ -62,19 +62,19 @@
             },
             {
               "action_kind": "generate_task",
-              "reason": "normal 目标已明确",
+              "reason": "executor 目标已明确",
               "tool": null,
               "args": {},
-              "task_type": "normal",
+              "task_type": "executor",
               "task_content": "总结最近一次 functest 结果并给出下一步建议",
               "observation": null
             }
           ],
           "task": {
-            "type": "normal",
+            "type": "executor",
             "content": "总结最近一次 functest 结果并给出下一步建议",
             "status": "done",
-            "result": "normal 完成：已总结并给出两条建议"
+            "result": "executor 完成：已总结并给出两条建议"
           },
           "reply": "最近一次 functest 通过，建议补充异常路径和并发场景测试。"
         }

@@ -2,7 +2,7 @@
 
 本文件是 `executor` 的执行参考。
 
-当当前 task 已经确定为 `normal` 时，executor 应结合：
+当当前 task 已经确定为 `executor` 时，executor 应结合：
 - 当前 `task_content`
 - recent `tasks`
 - 本 skill index
@@ -13,11 +13,11 @@
 
 ## 核心原则
 
-1. `task_result` 面向用户正文（normal 执行结果）
+1. `task_result` 面向用户正文（executor 执行结果）
 2. 只能基于已有上下文作答
 3. 缺少关键事实时，明确指出缺失项
 4. 不讨论内部 controller 逻辑
-5. 问候/引导类任务属于 normal 的标准职责，默认应 `done`
+5. 问候/引导类任务属于 executor 的标准职责，默认应 `done`
 
 ---
 

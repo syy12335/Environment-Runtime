@@ -113,16 +113,16 @@ controller 阶段不要求补齐：
 ## 场景化步骤（必须遵守）
 
 1. `你好` / `hello`
-   - `read normal-task.md` -> `generate_task(normal)`
+   - `read executor-task.md` -> `generate_task(executor)`
 
 2. `请帮我做一次 anthropic_ver_1 的功能测试`
    - `read functest-task.md` -> `generate_task(functest)`
 
 3. `请总结当前会话里上一次测试结果并给出下一步建议`
-   - `read normal-task.md` -> `build_observation_view(task_limit=3, include_trace=false, include_user_input=false, include_task=true, include_reply=false)` -> `generate_task(normal)`
+   - `read executor-task.md` -> `build_observation_view(task_limit=3, include_trace=false, include_user_input=false, include_task=true, include_reply=false)` -> `generate_task(executor)`
 
 4. `请解释当前会话里上一轮 accutest 的评分含义`
-   - `read normal-task.md` -> `build_observation_view(task_limit=5, include_trace=false, include_user_input=false, include_task=true, include_reply=false)` -> `generate_task(normal)`
+   - `read executor-task.md` -> `build_observation_view(task_limit=5, include_trace=false, include_user_input=false, include_task=true, include_reply=false)` -> `generate_task(executor)`
 
 5. `基于上轮失败点再做一次功能复测`
    - `read functest-task.md` -> `previous_failed_track {}` -> `generate_task(functest)`
@@ -158,7 +158,7 @@ controller 阶段不要求补齐：
   "action_kind": "observe|generate_task",
   "tool": "read|ls|previous_failed_track|build_observation_view|beijing_time|web_search",
   "args": {},
-  "task_type": "normal|functest|accutest|perftest",
+  "task_type": "executor|functest|accutest|perftest",
   "task_content": "一句最小可执行任务描述",
   "reason": "一句简短且可验证的动作原因"
 }

@@ -34,35 +34,35 @@
 
 ## task_type 与 reference 映射
 
-- `normal` -> `normal-task.md`
+- `executor` -> `executor-task.md`
 - `functest` -> `functest-task.md`
 - `accutest` -> `accutest-task.md`
 - `perftest` -> `perftest-task.md`
 
 优先 read 路径：
 
-- `src/task_router_graph/skills/controller/normal-task.md`
+- `src/task_router_graph/skills/controller/executor-task.md`
 - `src/task_router_graph/skills/controller/functest-task.md`
 - `src/task_router_graph/skills/controller/accutest-task.md`
 - `src/task_router_graph/skills/controller/perftest-task.md`
 
 ## 场景化步骤（按顺序）
 
-1. 场景：问候 / 引导（normal）
+1. 场景：问候 / 引导（executor）
    - 输入示例：`你好`
-   - 步骤：`read normal-task.md` -> `generate_task(normal)`
+   - 步骤：`read executor-task.md` -> `generate_task(executor)`
 
 2. 场景：明确对象的 functest
    - 输入示例：`请帮我做一次 anthropic_ver_1 的功能测试`
    - 步骤：`read functest-task.md` -> `generate_task(functest)`
 
-3. 场景：总结当前会话最近一次测试结果（normal）
+3. 场景：总结当前会话最近一次测试结果（executor）
    - 输入示例：`请总结上一次测试结果并给出下一步建议`
-   - 步骤：`read normal-task.md` -> `build_observation_view(task_limit=3, include_task=true)` -> `generate_task(normal)`
+   - 步骤：`read executor-task.md` -> `build_observation_view(task_limit=3, include_task=true)` -> `generate_task(executor)`
 
-4. 场景：解释当前会话上一轮 accutest（normal）
+4. 场景：解释当前会话上一轮 accutest（executor）
    - 输入示例：`请解释上一轮 accutest 的评分含义`
-   - 步骤：`read normal-task.md` -> `build_observation_view(task_limit=5, include_task=true)` -> `generate_task(normal)`
+   - 步骤：`read executor-task.md` -> `build_observation_view(task_limit=5, include_task=true)` -> `generate_task(executor)`
 
 5. 场景：基于失败点复测（functest）
    - 输入示例：`基于上轮失败点再做一次功能复测`

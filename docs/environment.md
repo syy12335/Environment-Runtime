@@ -103,7 +103,7 @@
 
 controller input assembly:
 
-- normal path: recent N tasks without trace (`task_limit=default_task_limit`).
+- executor path: recent N tasks without trace (`task_limit=default_task_limit`).
 - if current last task is failed:
   - broaden to full no-trace view (`task_limit=None`);
   - current implementation flattens tasks across all rounds in this environment.

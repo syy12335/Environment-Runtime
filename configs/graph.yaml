@@ -30,7 +30,6 @@ runtime:
   max_rounds: 4
   max_task_turns: 4
   max_controller_steps: 3
-  max_normal_steps: 4
   max_executor_steps: 4
-  default_task_type: normal
+  default_task_type: executor
   max_failed_retries: 3
