@@ -43,3 +43,9 @@ runtime:
   context_tool_mid_hits_max: 6
   context_tool_mid_hit_chars: 240
   context_view_target_tokens: 600
+  context_history_enabled: true
+  context_history_max_detail_rounds: 8
+  context_history_keep_recent_rounds: 4
+  context_history_summary_target_tokens: 700
+  context_history_meta_target_tokens: 400
+  context_history_inject_latest_shards: 2

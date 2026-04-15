@@ -90,6 +90,12 @@ class ContextCompressionOptions:
     tool_mid_hits_max: int = 6
     tool_mid_hit_chars: int = 240
     view_target_tokens: int = 600
+    history_enabled: bool = True
+    history_max_detail_rounds: int = 8
+    history_keep_recent_rounds: int = 4
+    history_summary_target_tokens: int = 700
+    history_meta_target_tokens: int = 400
+    history_inject_latest_shards: int = 2
 
 
 class AgentMemory:

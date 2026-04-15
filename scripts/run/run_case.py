@@ -11,7 +11,14 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 
-from run_common import ensure_preferred_provider_and_log, flush_tracers, log, with_heartbeat
+from run_common import (
+    ensure_preferred_provider_and_log,
+    flush_tracers,
+    log,
+    persist_run_result,
+    serialize_run_result,
+    with_heartbeat,
+)
 
 
 def main() -> None:
@@ -58,8 +65,10 @@ def main() -> None:
             args.heartbeat_sec,
             lambda: graph.run_case(case_path),
         )
+        persist_run_result(result, project_root=PROJECT_ROOT)
+        payload = serialize_run_result(result, project_root=PROJECT_ROOT)
 
-        print(json.dumps(result["output"], ensure_ascii=False, indent=2), flush=True)
+        print(json.dumps(payload["output"], ensure_ascii=False, indent=2), flush=True)
     finally:
         flush_tracers()
 

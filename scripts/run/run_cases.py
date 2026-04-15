@@ -15,7 +15,14 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 
-from run_common import ensure_preferred_provider_and_log, flush_tracers, log, with_heartbeat
+from run_common import (
+    ensure_preferred_provider_and_log,
+    flush_tracers,
+    log,
+    persist_run_result,
+    serialize_run_result,
+    with_heartbeat,
+)
 
 
 def _run_with_timeout(fn: Callable[[], object], timeout_sec: float, label: str) -> object:
@@ -135,7 +142,9 @@ def main() -> None:
                     break
                 continue
 
-            output_payload = result.get("output", {}) if isinstance(result, dict) else {}
+            persist_run_result(result, project_root=PROJECT_ROOT)
+            payload = serialize_run_result(result, project_root=PROJECT_ROOT)
+            output_payload = payload.get("output", {}) if isinstance(payload, dict) else {}
             task_status = str(output_payload.get("task_status", "")).strip().lower()
             task_result = str(output_payload.get("task_result", "")).strip()
 

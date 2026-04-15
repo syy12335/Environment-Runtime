@@ -95,6 +95,8 @@ class Environment:
     # Pointer to the current round. This is a formal state field.
     cur_round: int = 0
     updated_at: str = field(default_factory=_now_iso)
+    history_summaries: list[dict[str, Any]] = field(default_factory=list)
+    history_meta_summary: str = ""
 
     def __post_init__(self) -> None:
         # Keep cur_round in sync with rounds when the object is created.
@@ -140,6 +142,10 @@ class Environment:
         self.updated_at = _now_iso()
         self._assert_round_consistency()
         return record
+
+    def refresh_round_pointer(self) -> None:
+        self.cur_round = self._infer_cur_round()
+        self._assert_round_consistency()
 
     def _build_task_context(self, *, round_item: RoundRecord, task_item: TaskRecord) -> dict[str, Any]:
         return {
@@ -304,6 +310,7 @@ class Environment:
             f"cur_round: {self.cur_round}",
             f"round_count: {len(self.rounds)}",
             f"task_count: {total_task_count}",
+            f"history_summary_count: {len(self.history_summaries)}",
             "------------------------------",
         ]
 
@@ -344,6 +351,15 @@ class Environment:
 
         return "\n".join(lines)
 
+    def get_history_summary_latest(self, *, limit: int = 2) -> list[dict[str, Any]]:
+        limit_value = max(1, int(limit))
+        tail = self.history_summaries[-limit_value:]
+        normalized: list[dict[str, Any]] = []
+        for item in tail:
+            if isinstance(item, dict):
+                normalized.append(copy.deepcopy(item))
+        return normalized
+
     def build_context_view(
         self,
         *,
@@ -354,6 +370,7 @@ class Environment:
         include_trace: bool = False,
         compress: bool = False,
         compress_target_tokens: int | None = None,
+        history_summary_limit: int = 2,
     ) -> dict[str, Any]:
         self._assert_round_consistency()
 
@@ -392,6 +409,8 @@ class Environment:
         return {
             "cur_round": self.cur_round,
             "tasks": tasks_payload,
+            "history_summary_latest": self.get_history_summary_latest(limit=history_summary_limit),
+            "history_meta_summary": str(self.history_meta_summary or ""),
         }
 
     def build_rounds_view(self, *, include_trace: bool = True) -> list[dict[str, object]]:
@@ -426,7 +445,33 @@ class Environment:
             "rounds": self.build_rounds_view(include_trace=include_trace),
             "cur_round": self.cur_round,
             "updated_at": self.updated_at,
+            "history_summaries": copy.deepcopy(self.history_summaries),
+            "history_meta_summary": str(self.history_meta_summary or ""),
         }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "Environment":
+        rounds_payload = payload.get("rounds", [])
+        rounds = [RoundRecord.from_dict(item) for item in rounds_payload if isinstance(item, dict)]
+        history_summaries_payload = payload.get("history_summaries", [])
+        history_summaries: list[dict[str, Any]] = []
+        if isinstance(history_summaries_payload, list):
+            for item in history_summaries_payload:
+                if isinstance(item, dict):
+                    history_summaries.append(copy.deepcopy(item))
+
+        env = cls(
+            rounds=rounds,
+            history_summaries=history_summaries,
+            history_meta_summary=str(payload.get("history_meta_summary", "")),
+        )
+
+        updated_at = payload.get("updated_at")
+        if isinstance(updated_at, str) and updated_at.strip():
+            env.updated_at = updated_at
+
+        env.refresh_round_pointer()
+        return env
 
     def _infer_cur_round(self) -> int:
         if not self.rounds:

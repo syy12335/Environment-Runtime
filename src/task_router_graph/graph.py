@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+import re
+import json
 from threading import Lock
 from typing import Any, Callable, Literal
 
@@ -15,6 +18,7 @@ from .agents.async_workflows import (
     run_functest_async_workflow,
     run_perftest_async_workflow,
 )
+from .agents.agent_utils import extract_text, parse_json_object
 from .agents.memory import ContextCompressionOptions
 from .llm import build_chat_model
 from .nodes import (
@@ -24,8 +28,28 @@ from .nodes import (
     route_node,
     update_node,
 )
-from .schema import ControllerAction, Environment, Output, Task, to_dict
-from .utils import read_json, timestamp_tag, write_json
+from .schema import ControllerAction, Environment, Output, Task
+from .utils import read_json, timestamp_tag
+
+
+@dataclass
+class GraphRunResult:
+    environment: Environment
+    output: Output
+    run_id: str
+    archive_records: list[dict[str, Any]]
+
+
+def _short_text_for_rollup(text: str, *, max_len: int) -> str:
+    value = str(text).strip()
+    if not value:
+        return ""
+    marker = "\n[失败分析]"
+    if marker in value:
+        value = value.split(marker, 1)[0].strip()
+    if len(value) <= max_len:
+        return value
+    return value[:max_len] + "..."
 
 
 class GraphState(TypedDict, total=False):
@@ -39,7 +63,7 @@ class GraphState(TypedDict, total=False):
     task: Task
     reply: str
     run_id: str
-    run_dir: str
+    archive_records: list[dict[str, Any]]
     task_turn: int
     round_id: int
     workflow_pending: bool
@@ -81,9 +105,14 @@ class TaskRouterGraph:
             tool_mid_hits_max=int(runtime_cfg.get("context_tool_mid_hits_max", 6)),
             tool_mid_hit_chars=int(runtime_cfg.get("context_tool_mid_hit_chars", 240)),
             view_target_tokens=int(runtime_cfg.get("context_view_target_tokens", 600)),
+            history_enabled=bool(runtime_cfg.get("context_history_enabled", True)),
+            history_max_detail_rounds=int(runtime_cfg.get("context_history_max_detail_rounds", 8)),
+            history_keep_recent_rounds=int(runtime_cfg.get("context_history_keep_recent_rounds", 4)),
+            history_summary_target_tokens=int(runtime_cfg.get("context_history_summary_target_tokens", 700)),
+            history_meta_target_tokens=int(runtime_cfg.get("context_history_meta_target_tokens", 400)),
+            history_inject_latest_shards=int(runtime_cfg.get("context_history_inject_latest_shards", 2)),
         )
         self._environment_context_compress = bool(runtime_cfg.get("context_enabled", True))
-        self._run_root = (self.root / self.config["paths"]["run_root"]).resolve()
         self._workflow_executor: ThreadPoolExecutor = ThreadPoolExecutor(
             max_workers=3,
             thread_name_prefix="task-router-workflow",
@@ -153,14 +182,13 @@ class TaskRouterGraph:
 
     def _init_step(self, state: GraphState) -> GraphState:
         run_id = timestamp_tag()
-        run_dir = self._prepare_run_dir(run_id=run_id)
 
         environment = state["environment"]
         round_item = environment.start_round(user_input=state["user_input"])
 
         return {
             "run_id": run_id,
-            "run_dir": str(run_dir),
+            "archive_records": [],
             "task_turn": 0,
             "failed_retry_count": 0,
             "round_id": round_item.round_id,
@@ -338,10 +366,16 @@ class TaskRouterGraph:
                 round_id=int(state["round_id"]),
             )
 
+        updated_archive_records = list(state.get("archive_records", []))
+        rolled_environment, archive_records = self._rollup_environment_if_needed(environment=environment)
+        if archive_records:
+            updated_archive_records.extend(archive_records)
+
         return {
-            "environment": environment,
+            "environment": rolled_environment,
             "task_turn": int(state.get("task_turn", 0)) + 1,
             "failed_retry_count": failed_retry_count,
+            "archive_records": updated_archive_records,
         }
 
     def _pick_after_update(self, state: GraphState) -> Literal["failure_diagnose", "route", "final_reply"]:
@@ -623,6 +657,213 @@ class TaskRouterGraph:
         except Exception:
             return default
 
+    def _rollup_environment_if_needed(self, *, environment: Environment) -> tuple[Environment, list[dict[str, Any]]]:
+        if not self._context_options.history_enabled:
+            return environment, []
+
+        max_detail_rounds = max(1, int(self._context_options.history_max_detail_rounds))
+        if len(environment.rounds) <= max_detail_rounds:
+            return environment, []
+
+        keep_recent_rounds = max(1, int(self._context_options.history_keep_recent_rounds))
+        protected_round_ids = self._build_rollup_protected_round_ids(
+            environment=environment,
+            keep_recent_rounds=keep_recent_rounds,
+        )
+
+        all_round_ids = [int(item.round_id) for item in environment.rounds]
+        removable_round_ids = [round_id for round_id in all_round_ids if round_id not in protected_round_ids]
+        need_rollup_count = len(environment.rounds) - max_detail_rounds
+        if need_rollup_count <= 0:
+            return environment, []
+        if not removable_round_ids:
+            return environment, []
+
+        rolled_round_ids = set(removable_round_ids[:need_rollup_count])
+        rolled_rounds = [item for item in environment.rounds if int(item.round_id) in rolled_round_ids]
+        if not rolled_rounds:
+            return environment, []
+
+        rolled_rounds = sorted(rolled_rounds, key=lambda item: int(item.round_id))
+        rules_summary = self._build_history_summary_text(rolled_rounds=rolled_rounds)
+        final_summary = rules_summary
+
+        summary_tokens = max(1, int(self._context_options.history_summary_target_tokens))
+        if len(rules_summary) > max(200, summary_tokens * 4):
+            llm_summary = self._summarize_rollup_text_with_llm(
+                raw_summary=rules_summary,
+                recent_rounds=environment.rounds[-max(1, int(self._context_options.recent_rounds)):],
+                target_tokens=summary_tokens,
+            )
+            if llm_summary:
+                final_summary = llm_summary
+
+        next_summary_id = len(environment.history_summaries) + 1
+        summary_record = {
+            "summary_id": next_summary_id,
+            "round_start": int(rolled_rounds[0].round_id),
+            "round_end": int(rolled_rounds[-1].round_id),
+            "round_count": len(rolled_rounds),
+            "summary": final_summary,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        environment.history_summaries.append(summary_record)
+        environment.rounds = [item for item in environment.rounds if int(item.round_id) not in rolled_round_ids]
+        environment.refresh_round_pointer()
+        environment.updated_at = datetime.now(timezone.utc).isoformat()
+        self._update_history_meta_summary(environment=environment)
+
+        archive_records: list[dict[str, Any]] = []
+        for round_item in rolled_rounds:
+            archive_records.append(
+                {
+                    "record_type": "round_archive",
+                    "round_id": int(round_item.round_id),
+                    "archived_at": datetime.now(timezone.utc).isoformat(),
+                    "round": round_item.to_dict(),
+                }
+            )
+        return environment, archive_records
+
+    def _build_rollup_protected_round_ids(self, *, environment: Environment, keep_recent_rounds: int) -> set[int]:
+        protected: set[int] = set()
+        recent_rounds = environment.rounds[-max(1, int(keep_recent_rounds)) :]
+        for round_item in recent_rounds:
+            protected.add(int(round_item.round_id))
+
+        last_failed = environment.get_last_failed_task_context()
+        if isinstance(last_failed, dict):
+            failed_round_id = self._safe_int(last_failed.get("round_id"), 0)
+            if failed_round_id > 0:
+                protected.add(failed_round_id)
+
+        linked_round_ids = self._extract_linked_round_ids(environment=environment)
+        protected.update(linked_round_ids)
+
+        for round_item in environment.rounds:
+            for task_item in round_item.tasks:
+                status = str(task_item.task.status).strip().lower()
+                if status == "running":
+                    protected.add(int(round_item.round_id))
+                    break
+        return protected
+
+    def _extract_linked_round_ids(self, *, environment: Environment) -> set[int]:
+        linked_round_ids: set[int] = set()
+        pyskill_ref_pattern = re.compile(r"pyskill_task\(round_id=(\d+),\s*task_id=(\d+)\)")
+        for round_item in environment.rounds:
+            for task_item in round_item.tasks:
+                task_result = str(task_item.task.result).strip()
+                for matched in pyskill_ref_pattern.findall(task_result):
+                    linked_round_ids.add(self._safe_int(matched[0], 0))
+
+                for track_step in task_item.track:
+                    if not isinstance(track_step, dict):
+                        continue
+                    return_payload = track_step.get("return")
+                    if isinstance(return_payload, dict):
+                        for field in ("source_round_id", "pyskill_round_id"):
+                            round_id = self._safe_int(return_payload.get(field), 0)
+                            if round_id > 0:
+                                linked_round_ids.add(round_id)
+                    source_round_id = self._safe_int(track_step.get("source_round_id"), 0)
+                    if source_round_id > 0:
+                        linked_round_ids.add(source_round_id)
+        return linked_round_ids
+
+    def _build_history_summary_text(self, *, rolled_rounds: list[Any]) -> str:
+        lines: list[str] = []
+        for round_item in rolled_rounds:
+            lines.append(f"round#{round_item.round_id}")
+            lines.append(f"user_input: {str(round_item.user_input).strip()}")
+            if not round_item.tasks:
+                lines.append("tasks: none")
+                continue
+
+            for task_item in round_item.tasks:
+                task_type = str(task_item.task.type).strip()
+                task_status = str(task_item.task.status).strip()
+                task_content = self._short_text(str(task_item.task.content).strip(), max_len=120)
+                task_result = _short_text_for_rollup(str(task_item.task.result).strip(), max_len=280)
+                task_reply = self._short_text(str(task_item.reply).strip(), max_len=160)
+                lines.append(
+                    f"- task#{task_item.task_id} type={task_type} status={task_status} content={task_content}"
+                )
+                if task_result:
+                    lines.append(f"  result: {task_result}")
+                if task_reply:
+                    lines.append(f"  reply: {task_reply}")
+        return "\n".join(lines).strip()
+
+    def _summarize_rollup_text_with_llm(
+        self,
+        *,
+        raw_summary: str,
+        recent_rounds: list[Any],
+        target_tokens: int,
+    ) -> str:
+        schema = {
+            "type": "object",
+            "properties": {
+                "summary": {"type": "string", "minLength": 1},
+            },
+            "required": ["summary"],
+            "additionalProperties": False,
+        }
+        llm = self._llm.bind(
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "environment_history_summary",
+                    "strict": True,
+                    "schema": schema,
+                },
+            }
+        )
+        recent_rounds_payload = [item.to_dict() for item in recent_rounds]
+        prompt_payload = {
+            "goal": "Summarize old environment rounds for long-term memory. Keep facts, failures, and constraints.",
+            "target_tokens": int(target_tokens),
+            "old_rounds_summary": raw_summary,
+            "recent_rounds": recent_rounds_payload,
+        }
+        try:
+            response = llm.invoke(
+                json.dumps(prompt_payload, ensure_ascii=False, indent=2),
+                config={
+                    "run_name": "task-router.history_rollup_summary",
+                    "tags": ["task-router", "llm", "history-rollup"],
+                },
+            )
+            text = extract_text(getattr(response, "content", response))
+            payload = parse_json_object(text)
+            return str(payload.get("summary", "")).strip()
+        except Exception:
+            return ""
+
+    def _update_history_meta_summary(self, *, environment: Environment) -> None:
+        if not environment.history_summaries:
+            environment.history_meta_summary = ""
+            return
+
+        latest_count = max(1, int(self._context_options.history_inject_latest_shards))
+        latest_items = environment.history_summaries[-latest_count:]
+        joined = "\n".join(str(item.get("summary", "")).strip() for item in latest_items if isinstance(item, dict))
+        meta_target = max(1, int(self._context_options.history_meta_target_tokens))
+        if len(joined) <= max(200, meta_target * 4):
+            environment.history_meta_summary = joined
+            return
+
+        llm_summary = self._summarize_rollup_text_with_llm(
+            raw_summary=joined,
+            recent_rounds=environment.rounds[-max(1, int(self._context_options.recent_rounds)) :],
+            target_tokens=meta_target,
+        )
+        if llm_summary:
+            environment.history_meta_summary = llm_summary
+            return
+        environment.history_meta_summary = joined[: max(300, meta_target * 3)]
+
 
     def _should_shortcut_status_query(
         self,
@@ -732,7 +973,7 @@ class TaskRouterGraph:
             "metadata": metadata,
         }
 
-    def run(self, *, case_id: str, user_input: str, environment: Environment | None = None) -> dict:
+    def run(self, *, case_id: str, user_input: str, environment: Environment | None = None) -> GraphRunResult:
         initial_state: GraphState = {
             "case_id": case_id,
             "user_input": user_input,
@@ -750,43 +991,40 @@ class TaskRouterGraph:
         env = result_state.get("environment")
         task = result_state.get("task")
         reply = str(result_state.get("reply", ""))
-        run_dir_value = result_state.get("run_dir")
+        run_id = str(result_state.get("run_id", "")).strip()
+        archive_records_raw = result_state.get("archive_records", [])
 
         if not isinstance(env, Environment):
             raise KeyError("graph result missing environment")
         if not isinstance(task, Task):
             raise KeyError("graph result missing task")
-        if not isinstance(run_dir_value, str) or not run_dir_value.strip():
-            raise KeyError("graph result missing run_dir")
+        if not run_id:
+            raise KeyError("graph result missing run_id")
 
-        run_dir = Path(run_dir_value)
+        archive_records: list[dict[str, Any]] = []
+        if isinstance(archive_records_raw, list):
+            for item in archive_records_raw:
+                if isinstance(item, dict):
+                    archive_records.append(dict(item))
+
         output = Output(
             case_id=case_id,
             task_type=task.type,
             task_status=task.status,
             task_result=task.result,
             reply=reply,
-            run_dir=str(run_dir.relative_to(self.root)),
+            run_dir="",
+        )
+        return GraphRunResult(
+            environment=env,
+            output=output,
+            run_id=run_id,
+            archive_records=archive_records,
         )
 
-        environment_payload = env.to_dict(include_trace=True)
-        environment_payload["case_id"] = case_id
-        result_payload = {
-            "environment": environment_payload,
-            "output": to_dict(output),
-        }
-
-        write_json(run_dir / "environment.json", environment_payload)
-        return result_payload
-
-    def run_case(self, case_path: str | Path) -> dict:
+    def run_case(self, case_path: str | Path) -> GraphRunResult:
         case = read_json(Path(case_path))
         return self.run(case_id=case["case_id"], user_input=case["user_input"])
-
-    def _prepare_run_dir(self, *, run_id: str) -> Path:
-        run_dir = self._run_root / f"run_{run_id}"
-        run_dir.mkdir(parents=True, exist_ok=True)
-        return run_dir
 
     def _load_prompt(self, relative_path: str) -> str:
         return self._resolve(relative_path).read_text(encoding="utf-8").strip()

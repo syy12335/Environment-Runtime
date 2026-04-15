@@ -11,7 +11,14 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 
-from run_common import ensure_preferred_provider_and_log, flush_tracers, log, with_heartbeat
+from run_common import (
+    ensure_preferred_provider_and_log,
+    flush_tracers,
+    log,
+    persist_run_result,
+    serialize_run_result,
+    with_heartbeat,
+)
 
 
 def _resolve_input(args: argparse.Namespace) -> str:
@@ -41,7 +48,7 @@ def _print_result(result: dict, *, show_environment: bool, show_raw: bool) -> No
 
 def _build_environment_show_text(result: dict) -> str:
     try:
-        from task_router_graph.schema import Environment, RoundRecord
+        from task_router_graph.schema import Environment
     except Exception as exc:
         return f"[show] failed to import schema: {exc}"
 
@@ -52,37 +59,8 @@ def _build_environment_show_text(result: dict) -> str:
     if not isinstance(environment_payload, dict):
         return "[show] missing environment payload"
 
-    rounds_payload = environment_payload.get("rounds", [])
-    rounds = [RoundRecord.from_dict(item) for item in rounds_payload if isinstance(item, dict)]
-
-    env = Environment(rounds=rounds)
-    updated_at = environment_payload.get("updated_at")
-    if isinstance(updated_at, str) and updated_at.strip():
-        env.updated_at = updated_at
-
+    env = Environment.from_dict(environment_payload)
     return env.show_environment(show_trace=True)
-
-
-def _restore_environment(result: dict):
-    try:
-        from task_router_graph.schema import Environment, RoundRecord
-    except Exception:
-        return None
-
-    if not isinstance(result, dict):
-        return None
-
-    environment_payload = result.get("environment")
-    if not isinstance(environment_payload, dict):
-        return None
-
-    rounds_payload = environment_payload.get("rounds", [])
-    rounds = [RoundRecord.from_dict(item) for item in rounds_payload if isinstance(item, dict)]
-    env = Environment(rounds=rounds)
-    updated_at = environment_payload.get("updated_at")
-    if isinstance(updated_at, str) and updated_at.strip():
-        env.updated_at = updated_at
-    return env
 
 
 def _print_show_track(result: dict) -> None:
@@ -158,13 +136,15 @@ def main() -> None:
                     args.heartbeat_sec,
                     lambda: graph.run(case_id=case_id, user_input=user_input, environment=interactive_environment),
                 )
-                interactive_environment = _restore_environment(result)
+                interactive_environment = result.environment
+                persist_run_result(result, project_root=PROJECT_ROOT)
+                payload = serialize_run_result(result, project_root=PROJECT_ROOT)
 
-                output = result.get("output", {}) if isinstance(result, dict) else {}
+                output = payload.get("output", {}) if isinstance(payload, dict) else {}
                 reply = str(output.get("reply", "")).strip()
                 print(f"Assistant> {reply}", flush=True)
-                _print_result(result, show_environment=args.show_environment, show_raw=args.raw)
-                _print_show_track(result)
+                _print_result(payload, show_environment=args.show_environment, show_raw=args.raw)
+                _print_show_track(payload)
                 turn += 1
             return
 
@@ -175,8 +155,10 @@ def main() -> None:
             args.heartbeat_sec,
             lambda: graph.run(case_id=args.case_id, user_input=user_input),
         )
-        _print_result(result, show_environment=args.show_environment, show_raw=args.raw)
-        _print_show_track(result)
+        persist_run_result(result, project_root=PROJECT_ROOT)
+        payload = serialize_run_result(result, project_root=PROJECT_ROOT)
+        _print_result(payload, show_environment=args.show_environment, show_raw=args.raw)
+        _print_show_track(payload)
     finally:
         flush_tracers()
 

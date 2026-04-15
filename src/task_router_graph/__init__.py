@@ -5,12 +5,14 @@
 
 from __future__ import annotations
 
-__all__ = ["TaskRouterGraph"]
+__all__ = ["TaskRouterGraph", "GraphRunResult"]
 
 
 def __getattr__(name: str):
-    if name == "TaskRouterGraph":
-        from .graph import TaskRouterGraph
+    if name in {"TaskRouterGraph", "GraphRunResult"}:
+        from .graph import GraphRunResult, TaskRouterGraph
 
-        return TaskRouterGraph
+        if name == "TaskRouterGraph":
+            return TaskRouterGraph
+        return GraphRunResult
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

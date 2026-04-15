@@ -16,9 +16,10 @@ if str(SRC_ROOT) not in sys.path:
 
 from task_router_graph import TaskRouterGraph
 from task_router_graph.llm import resolve_provider_and_model
-from task_router_graph.schema import Environment, RoundRecord
+from task_router_graph.schema import Environment
 
 from run_common import ensure_preferred_provider_and_log
+from run_common import persist_run_result, serialize_run_result
 
 
 st.set_page_config(page_title="Task Router Graph", layout="wide")
@@ -153,14 +154,7 @@ def _render_track(track: list[dict[str, Any]]) -> None:
 
 
 def _render_environment_show_text(environment: dict[str, Any]) -> None:
-    rounds_payload = environment.get("rounds", []) if isinstance(environment, dict) else []
-    rounds = [RoundRecord.from_dict(item) for item in rounds_payload if isinstance(item, dict)]
-    env = Environment(rounds=rounds)
-
-    updated_at = environment.get("updated_at") if isinstance(environment, dict) else None
-    if isinstance(updated_at, str) and updated_at.strip():
-        env.updated_at = updated_at
-
+    env = Environment.from_dict(environment if isinstance(environment, dict) else {})
     st.code(env.show_environment(show_trace=True), language="text")
 
 
@@ -220,7 +214,9 @@ def _run_graph(*, config_path: Path, case_id: str, user_input: str) -> dict[str,
         graph = _load_graph(str(config_path))
 
     with st.spinner("任务执行中..."):
-        return graph.run(case_id=case_id, user_input=user_input)
+        result = graph.run(case_id=case_id, user_input=user_input)
+    persist_run_result(result, project_root=PROJECT_ROOT)
+    return serialize_run_result(result, project_root=PROJECT_ROOT)
 
 
 if "run_history" not in st.session_state:

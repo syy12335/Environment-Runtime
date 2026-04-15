@@ -4,6 +4,7 @@ import os
 import socket
 import threading
 import time
+import json
 from pathlib import Path
 from typing import Any, Callable, TypeVar
 from urllib.error import HTTPError, URLError
@@ -31,6 +32,65 @@ def flush_tracers() -> None:
 def log(message: str) -> None:
     ts = time.strftime("%H:%M:%S")
     print(f"[{ts}] {message}", flush=True)
+
+
+def resolve_run_dir(*, project_root: Path, run_id: str) -> Path:
+    normalized = str(run_id).strip()
+    if not normalized:
+        raise ValueError("run_id is required to resolve run directory")
+    return project_root / "var" / "runs" / f"run_{normalized}"
+
+
+def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fp:
+        for row in rows:
+            fp.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def persist_run_result(result: Any, *, project_root: Path) -> tuple[Path, dict[str, Any]]:
+    from task_router_graph.utils import write_json
+
+    run_id = str(getattr(result, "run_id", "")).strip()
+    if not run_id:
+        raise ValueError("GraphRunResult.run_id is required")
+
+    run_dir = resolve_run_dir(project_root=project_root, run_id=run_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    environment = getattr(result, "environment", None)
+    output = getattr(result, "output", None)
+    if environment is None or output is None:
+        raise ValueError("GraphRunResult must include environment and output")
+
+    environment_payload = environment.to_dict(include_trace=True)
+    environment_payload["case_id"] = str(getattr(output, "case_id", "")).strip()
+    write_json(run_dir / "environment.json", environment_payload)
+
+    archive_records_raw = getattr(result, "archive_records", [])
+    archive_records: list[dict[str, Any]] = []
+    if isinstance(archive_records_raw, list):
+        for item in archive_records_raw:
+            if isinstance(item, dict):
+                archive_records.append(item)
+    append_jsonl(run_dir / "environment_archive.jsonl", archive_records)
+    return run_dir, environment_payload
+
+
+def serialize_run_result(result: Any, *, project_root: Path) -> dict[str, Any]:
+    from task_router_graph.schema import to_dict
+
+    run_dir = resolve_run_dir(project_root=project_root, run_id=str(getattr(result, "run_id", "")))
+    output_payload = to_dict(getattr(result, "output"))
+    output_payload["run_dir"] = str(run_dir.relative_to(project_root))
+    environment_payload = getattr(result, "environment").to_dict(include_trace=True)
+    environment_payload["case_id"] = str(output_payload.get("case_id", "")).strip()
+    return {
+        "environment": environment_payload,
+        "output": output_payload,
+    }
 
 
 def with_heartbeat(task_name: str, interval_sec: float, fn: Callable[[], T]) -> tuple[T, float]:
