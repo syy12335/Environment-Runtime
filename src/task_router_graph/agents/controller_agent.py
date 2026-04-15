@@ -274,6 +274,7 @@ class ControllerAgent:
 
             tool_name = str(action.get("tool", "")).strip()
             tool_args = action.get("args", {})
+            reason = str(action.get("reason", "")).strip()
 
             tool = observe_tools.get(tool_name)
             if tool is None:
@@ -295,12 +296,18 @@ class ControllerAgent:
                 if isinstance(observation_result, str)
                 else json.dumps(observation_result, ensure_ascii=False, indent=2)
             )
+            observation_text = memory.trim_large_tool_result(
+                raw_result=observation_text,
+                task_text=user_input,
+                user_text=json.dumps(tasks, ensure_ascii=False),
+                assistant_text=text,
+            )
 
             observations.append(
                 {
                     "tool": tool_name,
                     "args": tool_args,
-                    "reason": str(action.get("reason", "")).strip(),
+                    "reason": reason,
                     "observation": observation_text,
                 }
             )
