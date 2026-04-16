@@ -2,6 +2,7 @@
 
 ## 文档导航
 
+- Skill 机制：`docs/skills.md`
 - Environment 设计：`docs/environment.md`
 - Agent Memory 与视图压缩：`docs/agent_memory.md`
 - 数据格式：`docs/data_format.md`
@@ -9,7 +10,7 @@
 
 说明：实现以 `src/task_router_graph/` 代码为准；文档用于对齐语义与协作口径。
 
-## Graph 主流程（2026-04-15）
+## Graph 主流程（2026-04-16）
 
 ```text
 init
@@ -48,7 +49,7 @@ init
 - 只负责：`observe` / `generate_task`
 - 输出：`Task + controller_trace`
 - 观察工具含：`read`、`ls`、`build_context_view`、`previous_failed_track`、`beijing_time`、`web_search`
-- 当前版本对 observe 参数执行 schema 约束（例如 `read/ls` 必须包含 `path`）
+- controller skill 通过 `src/task_router_graph/skills/controller/INDEX.md` + reference 文件组织
 - LLM 输入通过 agent memory 组装；在超窗时可触发压缩
 
 ### execute（executor/functest/accutest/perftest）
@@ -58,7 +59,10 @@ init
   - 当前 task 立即置为 `running`
   - `result=正在执行`
   - 记录 `dispatch_pyskill` 轨迹
-- executor 观察工具返回过大时，会先做首尾与中间命中段裁剪，再进入 memory
+- `executor` 支持 skill 插件化：
+  - 自动扫描 `src/task_router_graph/skills/executor/**/skill.md`
+  - 仅注入元数据（`name/description/when_to_use/path`）到 `EXECUTOR_SKILLS_INDEX`
+  - 命中后再 `read path` 加载 skill 正文
 
 ### update
 
@@ -81,14 +85,23 @@ init
 - 写入 `track`：`agent=reply,event=compose`
 - reply 与 failure_diagnose 也复用同一 memory 机制（统一上下文构造）
 
+## Skill 注入链路（关键）
+
+1. Graph 层只传根路径（`executor_skills_root`）给 executor node，不负责 skill 内容拼装。
+2. Executor agent 在运行时扫描 `skill.md`，解析 frontmatter。
+3. 系统只预注入可选取元数据：`name/description/when_to_use/path`。
+4. 模型命中 skill 后，必须通过 `read path` 拉取正文，再按正文规则执行。
+5. 新增 skill 时无需改 graph 编排代码，扩展点集中在 `skills/executor` 目录。
+
 ## 设计亮点
 
 1. 异步非阻塞执行：长任务不阻塞当前对话轮。
 2. 同轮多任务落盘：`pyskill_task` 与后续汇总任务可共存，利于追问场景。
 3. 强一致回链：source task 与异步结果通过可追踪引用关联。
-4. 轨迹统一：所有关键行为都落到 `track`，支持 CLI show 和离线复盘。
-5. 策略分层：graph 负责编排，agent 负责决策，schema 负责约束。
-6. 上下文治理：agent memory + 视图压缩共同控制 token 体积与噪声扩散。
+4. Skill 解耦扩展：executor skill 增删不侵入 graph，实现插件化演进。
+5. 轨迹统一：所有关键行为都落到 `track`，支持 CLI show 和离线复盘。
+6. 策略分层：graph 负责编排，agent 负责决策，schema 负责约束。
+7. 上下文治理：agent memory + 视图压缩共同控制 token 体积与噪声扩散。
 
 ## CLI 入口
 
