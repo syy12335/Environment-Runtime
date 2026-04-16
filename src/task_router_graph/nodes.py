@@ -267,13 +267,13 @@ class SkillToolRuntime:
         skill_mode = str(active_skill.get("skill_mode", "sync")).strip().lower() or "sync"
         if skill_mode == "pyskill":
             if self._pyskill_dispatched_run_id:
-                return _json_dump(
-                    {
+                return {
+                    "pyskill_dispatch": {
                         "accepted": False,
                         "error": "pyskill already dispatched for current task runtime",
                         "run_id": self._pyskill_dispatched_run_id,
                     }
-                )
+                }
 
             dispatch_payload = PYSKILL_RUNTIME.dispatch(
                 workflow_type="pyskill",
@@ -285,11 +285,9 @@ class SkillToolRuntime:
             )
             if bool(dispatch_payload.get("accepted", False)):
                 self._pyskill_dispatched_run_id = str(dispatch_payload.get("run_id", "")).strip()
-            return _json_dump(
-                {
-                    "pyskill_dispatch": dispatch_payload,
-                }
-            )
+            return {
+                "pyskill_dispatch": dispatch_payload,
+            }
 
         command = ["bash", script_path] if script_path.endswith(".sh") else [sys.executable, script_path]
         input_text = json.dumps(input_payload, ensure_ascii=False)

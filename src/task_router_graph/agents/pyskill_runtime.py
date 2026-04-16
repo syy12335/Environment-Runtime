@@ -24,6 +24,13 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _safe_read_text(path: str) -> str:
+    try:
+        return Path(path).read_text(encoding="utf-8", errors="ignore").strip()
+    except Exception:
+        return ""
+
+
 @dataclass
 class PyskillJob:
     run_id: str
@@ -170,8 +177,11 @@ class PyskillRuntimeRegistry:
                 exit_code = job.process.poll()
                 started_ts = datetime.fromisoformat(job.started_at_iso)
                 elapsed_sec = max(0.0, (now - started_ts).total_seconds())
-                timed_out = elapsed_sec >= timeout_value
-                if exit_code is None and timed_out:
+                timed_out = False
+
+                # Only mark timeout when process is still alive at collect time.
+                if exit_code is None and elapsed_sec >= timeout_value:
+                    timed_out = True
                     try:
                         if os.name == "posix" and _safe_int(job.process.pid, 0) > 0:
                             os.killpg(job.process.pid, signal.SIGKILL)
@@ -188,8 +198,8 @@ class PyskillRuntimeRegistry:
                 if exit_code is None:
                     continue
 
-                stdout_text = Path(job.stdout_log_path).read_text(encoding="utf-8", errors="ignore").strip()
-                stderr_text = Path(job.stderr_log_path).read_text(encoding="utf-8", errors="ignore").strip()
+                stdout_text = _safe_read_text(job.stdout_log_path)
+                stderr_text = _safe_read_text(job.stderr_log_path)
                 ready.append(
                     {
                         "run_id": run_id,

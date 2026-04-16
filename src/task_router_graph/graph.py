@@ -190,8 +190,11 @@ class TaskRouterGraph:
         run_id = timestamp_tag()
 
         environment = state["environment"]
-        self._fail_stale_running_tasks(environment=environment)
         round_item = environment.start_round(user_input=state["user_input"])
+        self._fail_stale_running_tasks(
+            environment=environment,
+            target_round_id=int(round_item.round_id),
+        )
 
         return {
             "run_id": run_id,
@@ -894,15 +897,18 @@ class TaskRouterGraph:
 
         return "", 0
 
-    def _fail_stale_running_tasks(self, *, environment: Environment) -> None:
+    def _fail_stale_running_tasks(self, *, environment: Environment, target_round_id: int | None = None) -> None:
         if not environment.rounds:
             return
-        target_round_id = int(max((int(item.round_id) for item in environment.rounds), default=0))
-        if target_round_id <= 0:
+        if target_round_id is None:
+            target_round_id = int(max((int(item.round_id) for item in environment.rounds), default=0))
+        else:
+            target_round_id = self._safe_int(target_round_id, 0)
+        if int(target_round_id) <= 0:
             return
         self._collect_stale_running_pyskill_tasks(
             environment=environment,
-            current_round_id=target_round_id,
+            current_round_id=int(target_round_id),
         )
 
     def _refresh_task_from_environment(self, *, environment: Environment, task: Task) -> Task:
