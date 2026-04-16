@@ -121,6 +121,7 @@ class FlowState(TypedDict, total=False):
     grade_reason: str
     grade_confidence: float
     heuristic: dict[str, Any]
+    warnings: list[str]
     task_status: str
     task_result: str
 
@@ -401,13 +402,16 @@ def _chat_json(*, chat_cfg: ChatConfig, system_prompt: str, user_payload: dict[s
             {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
         ],
     }
-    resp = _openai_post_json(
-        base_url=chat_cfg.base_url,
-        path="/chat/completions",
-        api_key=chat_cfg.api_key,
-        payload=body,
-        timeout_sec=chat_cfg.timeout_sec,
-    )
+    try:
+        resp = _openai_post_json(
+            base_url=chat_cfg.base_url,
+            path="/chat/completions",
+            api_key=chat_cfg.api_key,
+            payload=body,
+            timeout_sec=chat_cfg.timeout_sec,
+        )
+    except Exception:
+        return {}
     choices = resp.get("choices")
     if not isinstance(choices, list) or not choices:
         return {}
@@ -426,13 +430,16 @@ def _embed_texts(*, embedding_cfg: EmbeddingConfig, texts: list[str]) -> list[li
         "model": embedding_cfg.model,
         "input": cleaned,
     }
-    resp = _openai_post_json(
-        base_url=embedding_cfg.base_url,
-        path="/embeddings",
-        api_key=embedding_cfg.api_key,
-        payload=body,
-        timeout_sec=embedding_cfg.timeout_sec,
-    )
+    try:
+        resp = _openai_post_json(
+            base_url=embedding_cfg.base_url,
+            path="/embeddings",
+            api_key=embedding_cfg.api_key,
+            payload=body,
+            timeout_sec=embedding_cfg.timeout_sec,
+        )
+    except Exception:
+        return []
     data = resp.get("data")
     if not isinstance(data, list):
         return []
@@ -688,7 +695,9 @@ def _build_local_semantic_index(state: FlowState, *, embedding_cfg: EmbeddingCon
 
     chunks = _build_semantic_chunks(docs=docs, embedding_cfg=embedding_cfg)
     if not chunks:
-        return {"task_status": "failed", "task_result": "failed to build local semantic index"}
+        warnings = list(state.get("warnings", []))
+        warnings.append("local semantic index unavailable; fallback to web retrieval only")
+        return {"semantic_chunks": [], "warnings": warnings}
     return {"semantic_chunks": chunks}
 
 
@@ -921,6 +930,7 @@ def _synthesize_answer(state: FlowState, *, policy: RetrievalPolicy, chat_cfg: C
         "evidence": doc_view,
         "query_history": state.get("query_history", []),
         "heuristic": state.get("heuristic", {}),
+        "warnings": state.get("warnings", []),
         "agent_mode": policy.response_agent_mode,
         "engine": policy.retrieval_engine,
         "usage_note": policy.response_usage_note,
