@@ -1,549 +1,121 @@
-# PySkill 与 Environment 联动机制设计稿
+# PySkill 机制说明（实现对齐版）
 
-## 1. 背景
+本文档描述 **当前已实现** 的 PySkill 运行机制，并标注与早期设计稿相比尚未落地的能力（TODO）。
 
-当前 `task-router` 已经具备以下最小闭环：
+## 1. 当前定位
 
-- controller 负责路由与生成 task
-- execute 节点负责执行 task
-- update 节点负责将 task、result、track 写回 environment
-- final_reply 负责在 round 结束时统一生成回复
+- PySkill 是 `executor` task 的一种执行形态，不是新的路由 task type。
+- `task.type` 仍保持现有语义（`executor/functest/accutest/perftest` 等）。
+- PySkill 的目标是把长耗时执行从主链路中拆开，并通过 Environment 维持可观测、可回填、可收敛。
 
-下一步要解决的问题，不是再新增一个 task type，而是让 **可执行 PySkill** 正式成为这套闭环中的一部分。
+## 2. 已落地能力（设计亮点）
 
-当前阶段为了模拟真实 workflow 与 sub agent，已在新增若干 agent 的 `sleep` 行为。这个做法是合理的，因为它可以先验证：
+1. **协议化接入**
+- `SKILL.md` 支持 `skill-mode: sync|pyskill`（默认 `sync`）。
+- `skill-mode=pyskill` 时强校验：
+  - `allowed-tools` 必须且仅 1 个。
+  - 工具脚本必须是 `.py` 入口。
 
-1. 长任务执行时，environment 能否正确表达任务处于 `running`
-2. 多个中间步骤是否能被稳定记录进 `track`
-3. workflow / sub agent 完成后，主链路能否正确收束到 `done / failed`
+2. **非阻塞派发**
+- `skill_tool` 在 pyskill 模式下使用 `Popen` 后台启动，不阻塞 executor。
+- 返回结构化 dispatch 信息（含 `run_id/pid/accepted`）。
 
-因此，这一阶段的核心目标不是“让 PySkill 真正执行复杂业务逻辑”，而是先建立：
+3. **运行态可见**
+- source task 立即进入 `running`，`result=正在执行`。
+- source task `content` 追加运行引用：`[pyskill pid=... run_id=...]`。
 
-**PySkill 生命周期如何被 environment 正确表示、观察、回写与收束。**
+4. **pre-reply 收敛守门**
+- Graph 在进入 `final_reply` 前必经 `pre_reply_collect`。
+- 该节点会优先执行回收与状态收敛，避免“回复前状态仍陈旧”。
 
----
+5. **run_id 幂等回填**
+- 回填前按 `run_id` 检查终态是否已落地。
+- 防止重复追加多个 `pyskill_task`（多入口回收/竞态下仍只回填一次）。
 
-## 2. 核心定位
+6. **超时与死进程兜底**
+- 支持 `runtime.pyskill_timeout_sec` 超时判定。
+- 进程已死或句柄丢失时，自动 failed 收敛。
+- Linux/posix 下使用进程组终止（`start_new_session + killpg`）降低子进程残留。
 
-### 2.1 PySkill 的角色
+7. **重启后 running 收敛**
+- 启动时会扫描历史 `running` 的 pyskill source task。
+- 默认策略是 failed 收敛，避免任务长期悬挂。
 
-PySkill 不是新的 `task_type`，而是 **task 的一种执行形态**。
+8. **样板能力验证**
+- `time_range_info` 已改造为 `pyskill` 样板。
+- worker 脚本内使用 `langgraph` 运行最小 workflow（`validate -> fetch -> parse -> build`）。
 
-也就是说：
+## 3. 运行机制（按阶段）
 
-- `task.type` 仍然保持原有语义：`executor / functest / accutest / perftest`
-- PySkill 决定的是：该 task 是否通过一个可执行的、稳定的 workflow 来完成
-- environment 关心的不是 PySkill 的 Python 实现细节，而是：
-  - 当前任务是否已被派发
-  - 是否仍在运行
-  - 最近进展是什么
-  - 最终成功还是失败
+### 阶段 A：dispatch
 
-因此，PySkill 应被视为：
+- executor 命中 `skill-mode=pyskill` skill。
+- runtime 派发后台进程，返回 `run_id/pid`。
+- 当前 task 进入 `running` 并落 `dispatch_pyskill` 轨迹。
 
-**task execution runtime 的一种可观测实现**
+### 阶段 B：source 绑定
 
-而不是新的路由类别。
+- `update` 阶段把 `run_id` 绑定到 source task（`round_id/task_id`）。
+- 这一步保证后续回填能精确回链到源任务。
 
-### 2.2 Environment 的角色
+### 阶段 C：回收与收敛
 
-Environment 仍然只承担“中期状态层”的职责，不直接承载底层执行句柄。
+回收入口有两处，语义一致：
+- `collect_workflows`（每轮开头）
+- `pre_reply_collect`（每轮 reply 前）
 
-它负责记录：
+回收结果：
+- 成功：新增 `pyskill_task(status=done)`，并回链 source 为 `done`。
+- 失败：新增 `pyskill_task(status=failed)`，并回链 source 为 `failed`。
+- source `result` 会指向 `pyskill_task(round_id=..., task_id=...)`。
 
-- round / task 的正式状态
-- task 的执行结果
-- 可复盘的轨迹（track）
-- 当前任务是否仍在运行
-- 最近一次来自 PySkill 的状态更新
+### 阶段 D：状态追问
 
-Environment 不应该直接保存：
+- 用户追问“现在怎么样”时，Graph 可基于回收结果与 `running` 列表生成快捷汇总任务。
 
-- Python thread 对象
-- coroutine / future
-- process handle
-- scheduler 内部对象
+## 4. Track 事件（当前口径）
 
-这些内容应由独立 runtime manager 持有。
-
----
-
-## 3. 设计目标
-
-本阶段联动机制需要满足以下目标：
-
-### 3.1 状态可见
-
-PySkill 被触发后，environment 必须能表达：
-
-- 任务已进入 `running`
-- 当前仍在执行中
-- 最近一次进展是什么
-
-### 3.2 轨迹可复盘
-
-从 environment 的 `track` 中，应能看出：
-
-- 谁触发了 PySkill
-- PySkill 经过了哪些中间步骤
-- 哪个 sub agent 在做什么
-- 最终以什么结果结束
-
-### 3.3 收束一致
-
-不管任务是同步完成、异步完成，还是中途失败，最终都要统一收敛为：
-
-- `task.status = done`
-- 或 `task.status = failed`
-
-并将结果写入 `task.result`。
-
-### 3.4 不破坏现有主链路
-
-本次改动不应推翻当前 schema。
-
-原则上仍以现有字段为主：
-
-- `task.status`
-- `task.result`
-- `track`
-- `updated_at`
-
-优先通过 **新增事件语义** 实现联动，而不是大幅改 schema。
-
----
-
-## 4. 最小状态机
-
-对于接入 PySkill 的 task，建议采用如下最小状态机：
-
-```text
-pending -> running -> done
-                 \-> failed
-```
-
-说明：
-
-- `pending`：controller 已生成 task，但尚未真正派发执行
-- `running`：PySkill 已被 dispatch，当前仍在执行
-- `done`：PySkill 完成，结果有效
-- `failed`：PySkill 执行失败，或 workflow / sub agent 中途失败
-
-当前阶段不建议额外引入 `paused / cancelled / timeout` 等状态，先保证最小闭环稳定。
-
----
-
-## 5. 联动机制总览
-
-建议将 PySkill 与 environment 的联动拆成 4 个阶段：
-
-### 阶段 1：dispatch
-
-执行节点决定通过 PySkill 执行当前 task。
-
-此时需要：
-
-1. 将 `task.status` 从 `pending` 置为 `running`
-2. 在 `track` 中记录一条 `dispatch_pyskill`
-3. 为该次执行分配唯一 `run_id`
-
-### 阶段 2：heartbeat / progress
-
-PySkill 运行过程中，主动向 environment 写入中间状态。
-
-此时需要：
-
-1. 刷新 `updated_at`
-2. 在 `track` 中追加中间进度事件
-3. 让系统知道该任务仍然活着，而不是“看起来卡死”
-
-### 阶段 3：complete / fail
-
-PySkill 运行结束后，将最终结果一次性写回。
-
-成功时：
-
-- `task.status = done`
-- `task.result = 最终结果摘要`
-
-失败时：
-
-- `task.status = failed`
-- `task.result = 错误摘要`
-
-### 阶段 4：reply / next-step convergence
-
-主链路根据更新后的 task 状态继续推进：
-
-- `done` -> `final_reply`
-- `failed` -> `failure_diagnose` 或 `final_reply`
-
-这样 PySkill 的结束方式与普通 task 的结束方式在 graph 层保持一致。
-
----
-
-## 6. Track 事件设计
-
-当前最合理的做法，是通过 `track` 承载 PySkill 生命周期，而不是新增一套平行结构。
-
-建议新增以下事件类型。
-
-### 6.1 dispatch 事件
-
-当执行节点把 task 交给 PySkill 时：
-
-```json
-{
-  "agent": "executor",
-  "event": "dispatch_pyskill",
-  "task_status": "running",
-  "run_id": "pyskill_run_001",
-  "skill_name": "workflow_demo_skill",
-  "return": {
-    "accepted": true,
-    "run_id": "pyskill_run_001"
-  }
-}
-```
-
-作用：
-
-- 表示当前 task 已经进入 PySkill runtime
-- 后续 heartbeat / complete / fail 均围绕同一个 `run_id`
-
-### 6.2 heartbeat 事件
-
-当 PySkill 仍在执行时：
-
-```json
-{
-  "agent": "pyskill",
-  "event": "heartbeat",
-  "run_id": "pyskill_run_001",
-  "message": "workflow still running",
-  "progress": "step 2/5",
-  "return": {
-    "alive": true
-  }
-}
-```
-
-作用：
-
-- 表示任务没有死掉
-- 给 environment 提供最近一次活跃证据
-- 给前端或调试工具提供即时反馈
-
-### 6.3 workflow-step 事件
-
-如果 PySkill 内部存在多个 workflow 节点，建议显式记录每一步。
-
-```json
-{
-  "agent": "pyskill",
-  "event": "workflow_step",
-  "run_id": "pyskill_run_001",
-  "step_name": "call_sub_agent_a",
-  "message": "sub agent A started",
-  "return": {
-    "step_name": "call_sub_agent_a"
-  }
-}
-```
-
-作用：
-
-- 让 `sleep` 模拟不仅仅表现为“卡住几秒”，而是能够表达 workflow 的中间结构
-- 后续替换为真实 PySkill 时，这些事件语义可复用
-
-### 6.4 sub-agent 事件
-
-如果一个 PySkill 内部会调多个 sub agent，建议单独记录 sub agent 的起止。
-
-开始：
-
-```json
-{
-  "agent": "sub_agent_a",
-  "event": "start",
-  "run_id": "pyskill_run_001",
-  "return": {
-    "accepted": true
-  }
-}
-```
-
-结束：
-
-```json
-{
-  "agent": "sub_agent_a",
-  "event": "finish",
-  "run_id": "pyskill_run_001",
-  "task_status": "done",
-  "task_result": "sub agent A finished",
-  "return": {
-    "output": "sub agent A finished"
-  }
-}
-```
-
-作用：
-
-- 显式表达 workflow 内部的 agent 边界
-- 便于后续分析 sleep 模拟是否符合预期的编排顺序
-
-### 6.5 complete 事件
-
-PySkill 成功结束：
-
-```json
-{
-  "agent": "pyskill",
-  "event": "complete",
-  "run_id": "pyskill_run_001",
-  "task_status": "done",
-  "task_result": "workflow executed successfully",
-  "return": {
-    "output": "workflow executed successfully"
-  }
-}
-```
-
-### 6.6 fail 事件
-
-PySkill 失败结束：
-
-```json
-{
-  "agent": "pyskill",
-  "event": "fail",
-  "run_id": "pyskill_run_001",
-  "task_status": "failed",
-  "task_result": "sub agent B timeout",
-  "return": {
-    "error": "sub agent B timeout"
-  }
-}
-```
-
----
-
-## 7. 对 Environment 的最小要求
-
-当前阶段，不建议大改 `Environment` 顶层 schema。
-
-但至少要保证现有接口支持以下操作：
-
-### 7.1 可以在 task 执行中追加 track
-
-也就是：PySkill 在运行过程中，能够持续把 heartbeat / workflow_step / sub_agent 事件写入最后一个 task 的 `track`。
-
-这一点当前 `append_last_task_track(...)` 已经接近可用，但后续最好支持：
-
-- 按 `run_id` 校验是否写到正确 task
-- 明确只允许写当前 running task
-
-### 7.2 可以更新最后一个 running task 的状态与结果
-
-当前 `annotate_last_failed_task(...)` 只处理 failed 分支。
-
-为了让 PySkill 联动更自然，后续建议补一类更通用的接口，例如：
-
-- `update_last_task_status_result(...)`
-- 或 `finalize_running_task(...)`
-
-作用是统一处理：
-
-- `running -> done`
-- `running -> failed`
-
-否则未来 PySkill complete / fail 的回写逻辑会散落在 node 层。
-
-### 7.3 可读视图要暴露最近进展
-
-后续在 `build_context_view()` 或 `show_environment()` 中，最好能让最近一条 heartbeat / workflow_step 可见。
-
-这样 controller、reply、CLI、streamlit 才能看到：
-
-- 当前不是“无响应”
-- 而是“正在执行到哪一步”
-
----
-
-## 8. 当前阶段：基于 sleep 的验证方案
-
-你现在正在给几个 agent 增加 `sleep`，用于模拟 workflow 和 sub agent。
-
-这个阶段建议不要只把 `sleep` 当作“延迟”，而要把它设计成 **具备可观测事件的假执行器**。
-
-### 8.1 推荐做法
-
-以一个 demo PySkill 为例：
-
-```text
-dispatch
- -> workflow_step(start)
- -> sub_agent_a.start
- -> sleep(2)
- -> sub_agent_a.finish
- -> heartbeat
- -> sub_agent_b.start
- -> sleep(3)
- -> sub_agent_b.finish
- -> complete
-```
-
-在 environment 中，应能看到按顺序写入的轨迹。
-
-### 8.2 验证目标
-
-如果这套 sleep demo 跑通，至少说明下面几件事成立：
-
-1. 长任务可以进入 `running`
-2. 中间步骤能够持续写入 `track`
-3. sub agent 的边界能被观察到
-4. 执行结束后能统一收束为 `done / failed`
-5. reply / failure_diagnose 可以继续使用现有主链路
-
-### 8.3 当前阶段不要追求的内容
-
-当前阶段先不要急着做：
-
-- 真正的异步调度平台
-- 完整 heartbeat + TTL 回收
-- 前端主动通知
-- 复杂并发编排
-- 多任务并行一致性
-
-这些都属于下一阶段。
-
-现在最重要的是先把：
-
-**“PySkill 生命周期可被 environment 表达”**
-
-这件事做实。
-
----
-
-## 9. 建议的数据写回规则
-
-为了避免后续语义混乱，建议明确以下规则。
-
-### 规则 1：状态以 `task.status` 为准
-
-- `track` 只负责记录过程
-- 正式状态仍以 `task.status` 为准
-
-### 规则 2：最终结果以 `task.result` 为准
-
-- `track.return` 可以记录中间结果
-- 最终收束结果统一落到 `task.result`
-
-### 规则 3：同一 PySkill 执行必须共享同一个 `run_id`
-
-- dispatch / heartbeat / workflow_step / complete / fail 都必须带同一个 `run_id`
-- 否则后续无法准确复盘一条执行链路
-
-### 规则 4：sub agent 只是 track 事件来源，不单独成为顶层 task
-
-当前阶段不建议把 PySkill 内部 sub agent 再上升为 environment 顶层 task。
-
-否则会导致：
-
-- task 语义膨胀
-- controller 误把 workflow 内部步骤当成独立 task
-- environment 结构变复杂
-
-更合适的做法是：
-
-- 顶层仍只有一个 task
-- sub agent 作为该 task 的内部执行轨迹出现于 `track`
-
----
-
-## 10. 推荐的明日开发顺序
-
-### 第一步：先做协议，不先做复杂 runtime
-
-先定义清楚以下事件：
-
+当前稳定事件：
 - `dispatch_pyskill`
-- `heartbeat`
-- `workflow_step`
-- `sub_agent.start`
-- `sub_agent.finish`
-- `complete`
-- `fail`
+- `workflow_complete`
+- `workflow_fail`
+- `link_pyskill_result`
 
-### 第二步：用 sleep demo 跑通 track 写入
+关键字段：
+- `run_id`：业务唯一标识，作为幂等键。
+- `pid`：观测辅助字段，不参与幂等判定。
 
-先不追求真正异步，只要能证明：
+## 5. 结果解析口径（当前实现）
 
-- 进入 running
-- 中途多次写 track
-- 最终成功或失败收束
+- 优先从 worker `stdout` 的**最后一行 JSON**解析 `task_status/task_result`。
+- 若无法解析，降级使用 `exit_code + stdout/stderr` 形成结果。
+- `run_id` 始终作为回填与追踪主键。
 
-即可。
+## 6. 与设计稿对照：TODO
 
-### 第三步：补 environment 的状态更新接口
+以下是设计稿中提出、但当前仍未完全落地的亮点：
 
-将 PySkill 的终态回写抽成统一接口，避免回写逻辑散在 node 里。
+1. **细粒度进度事件**
+- 仍缺少统一的 `heartbeat/workflow_step/sub-agent` 事件写入规范与默认实现。
 
-### 第四步：再考虑 heartbeat + TTL + notify
+2. **Environment 通用终态接口**
+- 目前终态回填集中在 graph 层，尚未抽象成 `finalize_running_task(...)` 一类的统一 Environment API。
 
-这部分属于下一阶段。
+3. **进度可视化增强**
+- `build_context_view/show_environment` 尚未专门突出“最近一次 heartbeat/step”。
 
-只有当前这套“可观测联动”稳定后，再引入 heartbeat 超时回收、主动通知、前端 readiness 才有意义。
+4. **跨实例恢复执行**
+- 目前重启策略是“默认 failed 收敛”，尚未实现“重启后继续执行”的恢复能力。
 
----
+5. **结果协议进一步标准化**
+- 当前是“最后一行 JSON + 降级文本”策略，后续可升级为固定结果文件/IPC 协议。
 
-## 11. 本阶段最终验收标准
+## 7. 结论
 
-如果明天的联动机制实现完成，至少应满足以下验收条件：
+当前 PySkill 已完成“可用闭环”：
+- 可派发（非阻塞）
+- 可观测（running + run_id/pid）
+- 可收敛（pre-reply + 幂等回填）
+- 可兜底（超时/死进程/重启）
 
-### 验收 1
-
-一个接入 PySkill 的 task 被触发后，`task.status` 能从 `pending` 正确进入 `running`。
-
-### 验收 2
-
-在执行过程中，environment 的 `track` 中能看到：
-
-- workflow_step
-- heartbeat
-- sub agent 起止事件
-
-### 验收 3
-
-执行结束后，能够统一收束为：
-
-- `done`
-- 或 `failed`
-
-并把最终结果写入 `task.result`。
-
-### 验收 4
-
-现有 `final_reply / failure_diagnose` 不需要推翻，只需读取更新后的 task 状态即可继续工作。
-
-### 验收 5
-
-`sleep` 模拟被替换为真实 PySkill 后，事件语义不需要重做，只需要替换执行体。
-
----
-
-## 12. 结论
-
-PySkill 与 environment 的联动，本质上不是“把 Python 执行塞进 graph”，而是：
-
-**让一个可执行 workflow 的生命周期，被当前 task-router 的正式状态层稳定表达出来。**
-
-因此，本阶段最核心的设计原则是：
-
-1. PySkill 是执行形态，不是新 task_type
-2. environment 只记录状态、轨迹与结果，不保存底层句柄
-3. 联动以 `task.status + task.result + track` 为主
-4. 先用 sleep 模拟把生命周期打通，再替换为真实业务执行体
-
-如果这一步做稳，后续再接 heartbeat + TTL、失活回收、主动通知、前端 readiness，都会自然很多。
+下一阶段重点应放在“细粒度进度轨迹 + 可视化 + 恢复执行”这三项增强能力。
