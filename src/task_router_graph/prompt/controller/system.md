@@ -25,13 +25,20 @@
 - `build_context_view {"task_limit":3,"include_trace":false,"include_user_input":false,"include_task":true,"include_reply":false}`
 - `previous_failed_track {}`
 - `beijing_time {}`
-- `web_search {"query":"...","limit":3}`
+- `skill_tool {"name":"...","input":{...}}`
 
 ## 关键边界
 
 1. controller 负责“路由与任务定义”，不负责“内容检索与回答”。
-2. 对新闻/天气/信息查询类请求，通常直接生成 `executor` task；不要在 controller 阶段做 `web_search` 执行内容检索。
+2. 对新闻/天气/信息查询类请求，通常直接生成 `executor` task。
 3. 失败原因分析由 diagnoser 负责，controller 不做额外推断。
+
+## Skill 工具规则
+
+1. 只有在读取并命中某个 skill 的 `SKILL.md` 后，才能调用 `skill_tool`。
+2. `skill_tool.name` 必须属于当前激活 skill 的 `allowed-tools`。
+3. `skill_tool.input` 必须是 JSON object。
+4. `allowed-tools: []` 的 skill 不应调用 `skill_tool`。
 
 ## Observe 规则
 
@@ -39,7 +46,7 @@
 2. 能不 observe 就不 observe；有明确事实即可直接 `generate_task`。
 3. 参数硬约束：
    - `read/ls` 必须带 `path`
-   - `web_search` 必须带 `query`
+   - `skill_tool` 必须带 `name` 与 `input`，且 `input` 为对象
    - `previous_failed_track/beijing_time` 必须是 `{}`
 4. 同一 turn 禁止重复相同 `tool+args`。
 5. 步数约束：
@@ -75,7 +82,7 @@
 ```json
 {
   "action_kind": "observe|generate_task",
-  "tool": "read|ls|previous_failed_track|build_context_view|beijing_time|web_search",
+  "tool": "read|ls|previous_failed_track|build_context_view|beijing_time|skill_tool",
   "args": {},
   "task_type": "executor|functest|accutest|perftest",
   "task_content": "用户目标：...\\n任务限制：...",

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
-from pathlib import Path
 from typing import Any, Callable
 
 from jsonschema import ValidationError, validate
@@ -105,18 +103,18 @@ _OBSERVE_BEIJING_TIME_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
-_OBSERVE_WEB_SEARCH_SCHEMA: dict[str, Any] = {
+_OBSERVE_SKILL_TOOL_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "action_kind": {"const": "observe"},
-        "tool": {"const": "web_search"},
+        "tool": {"const": "skill_tool"},
         "args": {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "minLength": 1},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 5},
+                "name": {"type": "string", "minLength": 1},
+                "input": {"type": "object"},
             },
-            "required": ["query"],
+            "required": ["name", "input"],
             "additionalProperties": False,
         },
         "reason": {"type": "string", "minLength": 1},
@@ -133,7 +131,7 @@ _CONTROLLER_ACTION_SCHEMA: dict[str, Any] = {
         _OBSERVE_BUILD_VIEW_SCHEMA,
         _OBSERVE_PREVIOUS_FAILED_TRACK_SCHEMA,
         _OBSERVE_BEIJING_TIME_SCHEMA,
-        _OBSERVE_WEB_SEARCH_SCHEMA,
+        _OBSERVE_SKILL_TOOL_SCHEMA,
         {
             "type": "object",
             "properties": {
@@ -161,7 +159,7 @@ _OUTPUT_CONSTRAINTS: dict[str, Any] = {
         "build_context_view",
         "previous_failed_track",
         "beijing_time",
-        "web_search",
+        "skill_tool",
     ],
     "generate_task_required": ["action_kind", "task_type", "task_content", "reason"],
     "forbid_additional_properties": True,
@@ -171,7 +169,7 @@ _OUTPUT_CONSTRAINTS: dict[str, Any] = {
         "build_context_view": [],
         "previous_failed_track": [],
         "beijing_time": [],
-        "web_search": ["query"],
+        "skill_tool": ["name", "input"],
     },
 }
 
@@ -358,85 +356,19 @@ def _normalize_action_kind(action: dict[str, Any]) -> str:
     return raw
 
 
-def _resolve_workspace_root(workspace_root: str | Path | None) -> Path:
-    if workspace_root is None:
-        return Path(__file__).resolve().parents[3]
-    return Path(workspace_root).resolve()
-
-
-def _extract_skill_refs(index_text: str) -> list[str]:
-    refs = re.findall(r"\x60([A-Za-z0-9_./-]+\.md)\x60", index_text, flags=re.IGNORECASE)
-    seen: set[str] = set()
-    ordered_refs: list[str] = []
-    for ref in refs:
-        normalized = ref.strip()
-        lowered = normalized.lower()
-        if lowered in {"skill.md", "index.md"}:
-            continue
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        ordered_refs.append(normalized)
-    return ordered_refs
-
-
-def _resolve_skill_ref(workspace_root: Path, index_dir: Path, relative_ref: str) -> Path:
-    normalized = str(relative_ref).strip()
-    if not normalized:
-        return index_dir
-
-    index_relative = (index_dir / normalized).resolve()
-    repo_relative = (workspace_root / normalized).resolve()
-
-    if index_relative.exists() and index_relative.is_file():
-        return index_relative
-    if repo_relative.exists() and repo_relative.is_file():
-        return repo_relative
-
-    if "/" in normalized or "\\" in normalized:
-        return repo_relative
-    return index_relative
-
-
-def _load_skill_bundle(*, workspace_root: Path, skills_root: str) -> str:
-    index_path = (workspace_root / skills_root / "INDEX.md").resolve()
-    if not index_path.exists() or not index_path.is_file():
-        return ""
-
-    index_text = index_path.read_text(encoding="utf-8").strip()
-    sections: list[str] = ["### Skill Index", index_text]
-
-    for relative_ref in _extract_skill_refs(index_text):
-        ref_path = _resolve_skill_ref(workspace_root, index_path.parent, relative_ref)
-        if not ref_path.exists() or not ref_path.is_file():
-            continue
-        sections.extend([f"### Skill Reference: {relative_ref}", ref_path.read_text(encoding="utf-8").strip()])
-
-    return "\n\n".join(sections).strip()
-
-
 def route_task(
     *,
     llm: Any,
     system_prompt: str,
     user_input: str,
     tasks: dict[str, Any],
-    skills_index: str | None,
+    skills_index: str,
     observe_tools: dict[str, Callable[..., Any]],
     max_steps: int = 3,
     invoke_config: dict[str, Any] | None = None,
-    workspace_root: str | Path | None = None,
-    skills_root: str = "src/task_router_graph/skills/controller",
     context_options: ContextCompressionOptions | None = None,
     recent_rounds_payload: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    resolved_skills_index = str(skills_index or "").strip()
-    if not resolved_skills_index:
-        resolved_skills_index = _load_skill_bundle(
-            workspace_root=_resolve_workspace_root(workspace_root),
-            skills_root=skills_root,
-        )
-
     return ControllerAgent(
         llm=llm,
         system_prompt=system_prompt,
@@ -445,7 +377,7 @@ def route_task(
     ).run(
         user_input=user_input,
         tasks=tasks,
-        skills_index=resolved_skills_index,
+        skills_index=str(skills_index).strip(),
         observe_tools=observe_tools,
         invoke_config=invoke_config,
         recent_rounds_payload=recent_rounds_payload,

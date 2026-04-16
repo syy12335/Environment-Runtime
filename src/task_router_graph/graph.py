@@ -84,8 +84,10 @@ class TaskRouterGraph:
         self._failure_diagnosis_system = self._load_prompt("src/task_router_graph/prompt/failure_diagnosis/system.md")
         self._reply_system = self._load_prompt("src/task_router_graph/prompt/reply/system.md")
 
-        self._controller_skills_root = "src/task_router_graph/skills/controller"
-        self._executor_skills_root = "src/task_router_graph/skills/executor"
+        paths_cfg = self.config.get("paths", {})
+        default_skills_root = "src/task_router_graph/skills"
+        skills_root = str(paths_cfg.get("skills_root", default_skills_root)).strip()
+        self._skills_root = skills_root or default_skills_root
 
         runtime_cfg = self.config.get("runtime", {})
         self._max_controller_steps = int(runtime_cfg.get("max_controller_steps", runtime_cfg.get("max_observe_steps", 3)))
@@ -246,7 +248,7 @@ class TaskRouterGraph:
         task, controller_trace = route_node(
             llm=self._llm,
             controller_system=self._controller_system,
-            controller_skills_root=self._controller_skills_root,
+            skills_root=self._skills_root,
             environment=state["environment"],
             user_input=state["user_input"],
             workspace_root=self.root,
@@ -277,7 +279,7 @@ class TaskRouterGraph:
         task, reply, agent_track = executor_node(
             llm=self._llm,
             executor_system=self._executor_system,
-            executor_skills_root=self._executor_skills_root,
+            skills_root=self._skills_root,
             workspace_root=self.root,
             environment=state["environment"],
             task=state["task"],

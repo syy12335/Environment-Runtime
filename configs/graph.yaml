@@ -24,6 +24,7 @@ paths:
   cases_dir: data/cases
   run_root: var/runs
   logs_dir: var/logs
+  skills_root: src/task_router_graph/skills
 
 runtime:
   save_logs: true

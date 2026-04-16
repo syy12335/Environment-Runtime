@@ -1,16 +1,11 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import quote_plus
-from urllib.request import Request, urlopen
-
-try:
-    from defusedxml import ElementTree as SafeElementTree
-except Exception:  # pragma: no cover - fallback for minimal env
-    from xml.etree import ElementTree as SafeElementTree
 
 from .agents import (
     ControllerRouteError,
@@ -20,6 +15,10 @@ from .agents import (
     run_reply_task,
 )
 from .agents.memory import ContextCompressionOptions
+from .agents.skill_registry import (
+    build_skill_registry_text,
+    load_skill_catalog,
+)
 from .agents.async_workflows import (
     run_accutest_async_workflow,
     run_functest_async_workflow,
@@ -31,9 +30,7 @@ MAX_LIST_ENTRIES = 200
 MAX_READ_CHARS = 8000
 MAX_OBSERVATION_VIEW_TASKS = 20
 MAX_OBSERVATION_VIEW_WITH_TRACE_TASKS = 5
-MAX_WEB_SEARCH_RESULTS = 5
-MAX_WEB_SEARCH_QUERY_CHARS = 120
-MAX_WEB_SEARCH_HTTP_BYTES = 120000
+DEFAULT_SKILL_TOOL_TIMEOUT_SEC = 12
 ALLOWED_TASK_TYPES = {"executor", "functest", "accutest", "perftest"}
 
 
@@ -186,26 +183,181 @@ def _tool_previous_failed_track(*, environment: Environment, **_: Any) -> str:
     return _json_dump(environment.get_previous_failed_track_view())
 
 
-def _build_observe_tools(*, workspace_root: Path, environment: Environment) -> dict[str, Callable[..., Any]]:
+class SkillToolRuntime:
+    def __init__(self, *, workspace_root: Path, skill_catalog: dict[str, dict[str, Any]], timeout_sec: int = DEFAULT_SKILL_TOOL_TIMEOUT_SEC) -> None:
+        self.workspace_root = workspace_root.resolve()
+        self.skill_catalog = skill_catalog
+        self.timeout_sec = max(1, int(timeout_sec))
+        self.active_skill: dict[str, Any] | None = None
+        self._skill_file_index: dict[str, dict[str, Any]] = {}
+        for entry in skill_catalog.values():
+            skill_file_abs = str(entry.get("skill_file_abs", "")).strip()
+            if skill_file_abs:
+                self._skill_file_index[str(Path(skill_file_abs).resolve())] = entry
+
+    def activate_from_read_path(self, *, raw_path: str) -> None:
+        raw_value = str(raw_path).strip()
+        if not raw_value or Path(raw_value).name != "SKILL.md":
+            return
+
+        try:
+            target = _resolve_observe_path(workspace_root=self.workspace_root, raw_path=raw_value)
+        except Exception:
+            return
+
+        matched = self._skill_file_index.get(str(target))
+        if matched is not None:
+            self.active_skill = matched
+
+    def run(self, *, name: str, input_payload: Any) -> str:
+        tool_name = str(name).strip()
+        if not tool_name:
+            return "ERROR: skill_tool requires non-empty tool name"
+
+        if not isinstance(input_payload, dict):
+            return "ERROR: skill_tool.input must be a JSON object"
+
+        active_skill = self.active_skill
+        if active_skill is None:
+            return "ERROR: skill_tool requires an activated skill. Read a skill SKILL.md first."
+
+        allowed_tools = active_skill.get("allowed_tools", [])
+        if tool_name not in allowed_tools:
+            return (
+                f"ERROR: skill_tool '{tool_name}' is not allowed by active skill "
+                f"{active_skill.get('name', '<unknown>')}. allowed-tools={allowed_tools}"
+            )
+
+        scripts_abs = active_skill.get("scripts_abs", {})
+        script_path = str(scripts_abs.get(tool_name, "")).strip()
+        if not script_path:
+            return (
+                f"ERROR: skill_tool script is not configured for tool '{tool_name}' in "
+                f"skill {active_skill.get('name', '<unknown>')}"
+            )
+
+        command = ["bash", script_path] if script_path.endswith(".sh") else [sys.executable, script_path]
+        input_text = json.dumps(input_payload, ensure_ascii=False)
+        cwd = str(active_skill.get("skill_dir_abs", self.workspace_root))
+
+        try:
+            result = subprocess.run(
+                command,
+                input=input_text,
+                text=True,
+                capture_output=True,
+                cwd=cwd,
+                timeout=self.timeout_sec,
+            )
+        except subprocess.TimeoutExpired as exc:
+            return _json_dump(
+                {
+                    "tool": tool_name,
+                    "skill": str(active_skill.get("name", "")),
+                    "script": script_path,
+                    "timed_out": True,
+                    "timeout_sec": self.timeout_sec,
+                    "stdout": str(exc.stdout or "").strip(),
+                    "stderr": str(exc.stderr or "").strip(),
+                    "exit_code": None,
+                }
+            )
+        except Exception as exc:
+            return _json_dump(
+                {
+                    "tool": tool_name,
+                    "skill": str(active_skill.get("name", "")),
+                    "script": script_path,
+                    "timed_out": False,
+                    "stdout": "",
+                    "stderr": str(exc),
+                    "exit_code": None,
+                }
+            )
+
+        stdout_text = str(result.stdout or "").strip()
+        stderr_text = str(result.stderr or "").strip()
+        exit_code = int(result.returncode)
+
+        if exit_code != 0:
+            return _json_dump(
+                {
+                    "tool": tool_name,
+                    "skill": str(active_skill.get("name", "")),
+                    "script": script_path,
+                    "timed_out": False,
+                    "stdout": stdout_text,
+                    "stderr": stderr_text,
+                    "exit_code": exit_code,
+                }
+            )
+
+        # Success path: return tool stdout directly as the primary observation payload.
+        if stdout_text:
+            return stdout_text
+        return _json_dump(
+            {
+                "tool": tool_name,
+                "skill": str(active_skill.get("name", "")),
+                "script": script_path,
+                "timed_out": False,
+                "stdout": "",
+                "stderr": stderr_text,
+                "exit_code": exit_code,
+            }
+        )
+
+
+def _tool_skill_tool(
+    *,
+    skill_runtime: SkillToolRuntime,
+    name: str = "",
+    input_payload: Any = None,
+    input: Any = None,
+    **_: Any,
+) -> str:
+    payload = input_payload if input_payload is not None else input
+    return skill_runtime.run(name=name, input_payload=payload)
+
+
+def _tool_read_with_skill_activation(*, workspace_root: Path, skill_runtime: SkillToolRuntime, path: str = "") -> str:
+    result = _tool_read(workspace_root=workspace_root, path=path)
+    if not result.startswith("ERROR:"):
+        skill_runtime.activate_from_read_path(raw_path=path)
+    return result
+
+
+def _build_observe_tools(
+    *,
+    workspace_root: Path,
+    environment: Environment,
+    skill_runtime: SkillToolRuntime,
+) -> dict[str, Callable[..., Any]]:
     return {
-        "read": lambda **kwargs: _tool_read(
+        "read": lambda **kwargs: _tool_read_with_skill_activation(
             workspace_root=workspace_root,
-            **_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment"}),
+            skill_runtime=skill_runtime,
+            **_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment", "skill_runtime"}),
         ),
         "ls": lambda **kwargs: _tool_ls(
             workspace_root=workspace_root,
-            **_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment"}),
+            **_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment", "skill_runtime"}),
         ),
         "build_context_view": lambda **kwargs: _tool_build_context_view(
             environment=environment,
-            **_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment"}),
+            **_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment", "skill_runtime"}),
         ),
         "previous_failed_track": lambda **kwargs: _tool_previous_failed_track(
             environment=environment,
-            **_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment"}),
+            **_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment", "skill_runtime"}),
         ),
-        "beijing_time": lambda **kwargs: _tool_beijing_time(**_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment"})),
-        "web_search": lambda **kwargs: _tool_web_search(**_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment"})),
+        "beijing_time": lambda **kwargs: _tool_beijing_time(
+            **_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment", "skill_runtime"})
+        ),
+        "skill_tool": lambda **kwargs: _tool_skill_tool(
+            skill_runtime=skill_runtime,
+            **_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment", "skill_runtime"}),
+        ),
     }
 
 
@@ -292,7 +444,7 @@ def route_node(
     *,
     llm: Any,
     controller_system: str,
-    controller_skills_root: str,
+    skills_root: str,
     environment: Environment,
     user_input: str,
     workspace_root: Path,
@@ -302,13 +454,39 @@ def route_node(
     environment_context_compress: bool = False,
 ) -> tuple[Task, list[ControllerAction]]:
     context_options = context_options or ContextCompressionOptions()
+    try:
+        controller_catalog = load_skill_catalog(
+            workspace_root=workspace_root,
+            skills_root=skills_root,
+            agent="controller",
+        )
+    except Exception as exc:
+        task = _build_route_failed_task(user_input=user_input, reason=f"controller skills load failed: {exc}")
+        controller_trace = [
+            ControllerAction(
+                action_kind="observe",
+                reason="route_failed",
+                observation=str(exc),
+            )
+        ]
+        return task, controller_trace
+
+    controller_skills_index = build_skill_registry_text(catalog=controller_catalog, agent="controller")
+    skill_runtime = SkillToolRuntime(
+        workspace_root=workspace_root,
+        skill_catalog=controller_catalog,
+    )
     tasks_context = environment.build_controller_context(
         default_task_limit=5,
         compress=environment_context_compress,
         compress_target_tokens=context_options.view_target_tokens,
     )
 
-    observe_tools = _build_observe_tools(workspace_root=workspace_root, environment=environment)
+    observe_tools = _build_observe_tools(
+        workspace_root=workspace_root,
+        environment=environment,
+        skill_runtime=skill_runtime,
+    )
     recent_rounds_payload = environment.build_rounds_view(include_trace=False)
 
     try:
@@ -317,12 +495,10 @@ def route_node(
             system_prompt=controller_system,
             user_input=user_input,
             tasks=tasks_context,
-            skills_index=None,
+            skills_index=controller_skills_index,
             observe_tools=observe_tools,
             max_steps=max_steps,
             invoke_config=invoke_config,
-            workspace_root=workspace_root,
-            skills_root=controller_skills_root,
             context_options=context_options,
             recent_rounds_payload=recent_rounds_payload,
         )
@@ -368,7 +544,7 @@ def executor_node(
     *,
     llm: Any,
     executor_system: str,
-    executor_skills_root: str,
+    skills_root: str,
     workspace_root: Path,
     environment: Environment,
     task: Task,
@@ -378,6 +554,22 @@ def executor_node(
     environment_context_compress: bool = False,
 ) -> tuple[Task, str, list[dict[str, Any]]]:
     context_options = context_options or ContextCompressionOptions()
+    try:
+        executor_catalog = load_skill_catalog(
+            workspace_root=workspace_root,
+            skills_root=skills_root,
+            agent="executor",
+        )
+    except Exception as exc:
+        task.status = "failed"
+        task.result = f"executor skills load failed: {exc}"
+        return task, "", _build_executor_track(executor="executor", event="execute", task=task)
+
+    executor_skills_index = build_skill_registry_text(catalog=executor_catalog, agent="executor")
+    skill_runtime = SkillToolRuntime(
+        workspace_root=workspace_root,
+        skill_catalog=executor_catalog,
+    )
     skipped = _try_skip_execute(task, stage="executor")
     if skipped is not None:
         skipped_task, skipped_reply = skipped
@@ -394,18 +586,19 @@ def executor_node(
         compress_target_tokens=context_options.view_target_tokens,
     )
     recent_rounds_payload = environment.build_rounds_view(include_trace=False)
-    executor_tools = _build_executor_tools(workspace_root=workspace_root)
+    executor_tools = _build_executor_tools(
+        workspace_root=workspace_root,
+        skill_runtime=skill_runtime,
+    )
     result = run_executor_task(
         llm=llm,
         system_prompt=executor_system,
         task_content=task.content,
         tasks=tasks_context,
-        executor_skills_index=None,
+        executor_skills_index=executor_skills_index,
         observe_tools=executor_tools,
         max_steps=max(1, int(max_steps)),
         invoke_config=invoke_config,
-        workspace_root=workspace_root,
-        executor_skills_root=executor_skills_root,
         context_options=context_options,
         recent_rounds_payload=recent_rounds_payload,
     )
@@ -617,21 +810,6 @@ def update_node(
     return environment
 
 
-def _safe_http_get_text(*, url: str, timeout_sec: float = 10.0, max_bytes: int = MAX_WEB_SEARCH_HTTP_BYTES) -> str:
-    request = Request(
-        url,
-        headers={
-            "User-Agent": "task-routing-executor-agent/1.0 (+https://example.local)",
-            "Accept": "application/rss+xml, application/xml, text/xml, text/plain, */*",
-        },
-    )
-    with urlopen(request, timeout=timeout_sec) as response:
-        raw = response.read(max_bytes + 1)
-    if len(raw) > max_bytes:
-        raw = raw[:max_bytes]
-    return raw.decode("utf-8", errors="ignore")
-
-
 def _tool_beijing_time(**_: Any) -> str:
     beijing_tz = timezone(timedelta(hours=8), name="Asia/Shanghai")
     now = datetime.now(tz=beijing_tz)
@@ -647,97 +825,19 @@ def _tool_beijing_time(**_: Any) -> str:
     return _json_dump(payload)
 
 
-def _parse_bing_rss_results(*, xml_text: str, limit: int) -> list[dict[str, str]]:
-    try:
-        root = SafeElementTree.fromstring(xml_text)
-    except Exception:
-        return []
-
-    results: list[dict[str, str]] = []
-    seen_urls: set[str] = set()
-
-    for item in root.findall("./channel/item"):
-        title = str(item.findtext("title") or "").strip()
-        link = str(item.findtext("link") or "").strip()
-        desc = str(item.findtext("description") or "").strip()
-
-        if not link or link in seen_urls:
-            continue
-        seen_urls.add(link)
-
-        results.append(
-            {
-                "title": title,
-                "url": link,
-                "snippet": desc,
-            }
-        )
-        if len(results) >= limit:
-            break
-
-    return results
-
-
-def _tool_web_search(*, query: str, limit: int = 3, **_: Any) -> str:
-    query_value = str(query or "").strip()
-    if not query_value:
-        return _json_dump({"error": "query is empty"})
-
-    if len(query_value) > MAX_WEB_SEARCH_QUERY_CHARS:
-        return _json_dump(
-            {
-                "error": (
-                    f"query is too long (>{MAX_WEB_SEARCH_QUERY_CHARS}). "
-                    "Please use a concise and specific query."
-                )
-            }
-        )
-
-    try:
-        limit_value = int(limit)
-    except Exception:
-        limit_value = 3
-    limit_value = max(1, min(MAX_WEB_SEARCH_RESULTS, limit_value))
-
-    rss_url = f"https://www.bing.com/search?q={quote_plus(query_value)}&format=rss"
-
-    try:
-        xml_text = _safe_http_get_text(url=rss_url)
-    except Exception as exc:
-        return _json_dump(
-            {
-                "query": query_value,
-                "count": 0,
-                "results": [],
-                "error": f"web search request failed: {exc}",
-            }
-        )
-
-    results = _parse_bing_rss_results(xml_text=xml_text, limit=limit_value)
-    payload: dict[str, Any] = {
-        "query": query_value,
-        "count": len(results),
-        "results": results,
-        "engine": "bing_rss",
-        "usage_note": "web_search 开销较高且结果噪声较大，仅在必须依赖外部时效信息时使用",
-    }
-    if not results:
-        payload["hint"] = "no results found; try a more specific query"
-
-    return _json_dump(payload)
-
-
-def _build_executor_tools(*, workspace_root: Path) -> dict[str, Callable[..., Any]]:
+def _build_executor_tools(*, workspace_root: Path, skill_runtime: SkillToolRuntime) -> dict[str, Callable[..., Any]]:
     return {
-        "read": lambda **kwargs: _tool_read(
+        "read": lambda **kwargs: _tool_read_with_skill_activation(
             workspace_root=workspace_root,
-            **_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment"}),
+            skill_runtime=skill_runtime,
+            **_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment", "skill_runtime"}),
         ),
         "beijing_time": lambda **kwargs: _tool_beijing_time(
-            **_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment"})
+            **_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment", "skill_runtime"})
         ),
-        "web_search": lambda **kwargs: _tool_web_search(
-            **_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment"})
+        "skill_tool": lambda **kwargs: _tool_skill_tool(
+            skill_runtime=skill_runtime,
+            **_sanitize_tool_kwargs(kwargs, reserved={"workspace_root", "environment", "skill_runtime"}),
         ),
     }
 
