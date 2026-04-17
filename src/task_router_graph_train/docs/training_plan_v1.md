@@ -41,15 +41,29 @@ v1 只解决一件事：
 
 ## 训练路线
 
-固定为两阶段：
+当前 v1 固定为两阶段：
 
 1. `SFT warm start`
-   - 把 controller 拉到可优化区间
+   - 当前已经进入正式实现链路
+   - 先用小份 `teacher bootstrap` 样本把 controller 拉到可优化区间
    - 重点先解决 JSON schema、动作类别和环境事实引用
 2. `offline RL`
    - 对同一 state 采样多个候选动作
    - 用 `controller_v1` 程序化奖励打分
    - 用 reward-weighted policy improvement 做小步更新
+
+未来可升级路线：
+
+3. `future GRPO`
+   - 只作为后续扩展方向，不是当前 v1 的既定实现
+   - 默认仍以前置 `SFT warm start` 为基础
+   - 重点解决“多个已可比较候选之间如何做更正式的组比较策略优化”
+
+之所以把 `SFT warm start` 放在 `GRPO` 之前，是因为：
+
+- 没有 warm start 时，policy 采样出来的大量候选往往过于低质
+- `GRPO` 这类策略优化更依赖“候选已经进入可比较区间”
+- `SFT` 先稳定 schema、动作类型和基本环境对齐，后续再用 `GRPO` 强化偏好更稳
 
 本期 episode 语义固定为：
 
@@ -58,6 +72,18 @@ v1 只解决一件事：
 本期训练输入固定使用：
 
 - `build_controller_state_input(...)`
+
+当前 SFT 默认数据源固定为：
+
+- `assets/sft_v1/teacher_source/`
+
+它是小份 `teacher bootstrap`，目标是先把 `teacher 数据 -> TrainingRecord -> SFT examples -> LoRA train_sft` 的链路做通。
+
+当前明确不作为默认训练源的是：
+
+- `docs/archive_legacy/2026-04/rl/controller_train.jsonl`
+
+legacy 数据仍然保留为后续扩展参考，但不进入这次最小实现的默认构建路径。
 
 本期默认动作空间固定为：
 
@@ -99,16 +125,22 @@ controller 奖励继续使用：
 
 正式实现沉淀顺序固定为：
 
-1. 先在 notebook 中把数据、reward、offline RL 流程走通
-2. 再把稳定逻辑沉淀到 `dataset/`、训练模块和 `cli/`
+1. 先在 notebook 中把 `teacher source -> records -> examples -> train_sft` 走通
+2. 再把 reward、offline RL 流程沉淀到 `dataset/`、训练模块和 `cli/`
 3. 最终用现有 evaluator 和 holdout 做门禁
+
+这里的正式表达固定为：
+
+- 当前实现：`SFT + 最小 offline RL`
+- 未来可升级：在 `SFT` 之后尝试 `GRPO`
+- 当前文档不会把 `PPO / GRPO` 写成 v1 的既定工程承诺
 
 ## 后续正式入口
 
 v1 完整实现后应补齐的正式入口包括：
 
 - `build_controller_train_records(...)`
-- `score_controller_action(...)`
 - `train_controller_sft(...)`
+- `score_controller_action(...)`
 - `train_controller_rl(...)`
 - `evaluate_controller_policy(...)`

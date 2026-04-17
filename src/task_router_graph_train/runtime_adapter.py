@@ -22,6 +22,8 @@ def build_controller_state_input(
     workspace_root: Path | None = None,
     skills_root: str = DEFAULT_RUNTIME_SKILLS_ROOT,
 ) -> dict[str, Any]:
+    # controller 训练态真正看到的 state 真源就在这里。
+    # 它把 runtime Environment 收敛成训练时可比较、可重复构造的正式输入。
     runtime_root = _resolve_runtime_root(workspace_root)
     environment = Environment.from_dict(copy.deepcopy(environment_payload))
     return {
@@ -44,6 +46,7 @@ def build_reply_state_input(
     environment_payload: dict[str, Any],
     final_task: dict[str, Any],
 ) -> dict[str, Any]:
+    # reply 只看 formal state 视图和最终任务，不应直接接触 verifier sidecar 扩展信息。
     environment = Environment.from_dict(copy.deepcopy(environment_payload))
     return {
         "USER_INPUT": str(user_input),
@@ -66,6 +69,8 @@ def _resolve_runtime_root(workspace_root: Path | None) -> Path:
 
 
 def _build_skill_registry_preview(*, workspace_root: Path, skills_root: str, agent: str) -> str:
+    # skill registry preview 只是训练态的技能元信息摘要，
+    # 用来帮助模型理解“有哪些候选技能”，不是运行时真实执行结果。
     agent_root = (workspace_root / skills_root / agent).resolve()
     entries: list[dict[str, Any]] = []
     if not agent_root.exists():
