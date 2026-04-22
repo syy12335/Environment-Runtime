@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -29,8 +30,8 @@ def test_only_runtime_adapter_imports_runtime_package() -> None:
             continue
         if path in allowed_files:
             continue
-        assert "from task_router_graph" not in text
-        assert "import task_router_graph" not in text
+        assert re.search(r"^\s*from task_router_graph(?:\.|\s)", text, flags=re.MULTILINE) is None
+        assert re.search(r"^\s*import task_router_graph(?:\s|$)", text, flags=re.MULTILINE) is None
 
 
 def test_root_directories_do_not_expose_rl_v1_formal_entrypoints() -> None:
@@ -146,7 +147,11 @@ def test_train_module_cli_smoke(tmp_path: Path) -> None:
         text=True,
     )
     assert grpo_help_proc.returncode == 0, grpo_help_proc.stderr
+    assert "--config" in grpo_help_proc.stdout
     assert "--teacher-mode" in grpo_help_proc.stdout
+    assert "--teacher-base-url" in grpo_help_proc.stdout
+    assert "--export-only" in grpo_help_proc.stdout
+    assert "--run-verl-update" in grpo_help_proc.stdout
 
     badcase_help_cmd = [
         sys.executable,

@@ -5,26 +5,64 @@ import json
 from pathlib import Path
 
 from ..runtime_adapter import ASSETS_ROOT, REPO_ROOT
+from ..train.controller_grpo import DEFAULT_GRPO_CONFIG_PATH
 from ..train import train_controller_grpo
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train controller with teacher-ranked GRPO-style updates.")
+    parser = argparse.ArgumentParser(description="Train controller with online teacher GRPO updates on verl backend.")
+    parser.add_argument(
+        "--config",
+        default=str(DEFAULT_GRPO_CONFIG_PATH),
+        help="Path to the main online GRPO config yaml.",
+    )
     parser.add_argument(
         "--output-dir",
         default="var/runs/task_router_graph_train/grpo/latest",
-        help="Directory for rollout groups, rankings, training examples, and reports.",
+        help="Directory for RL dataset, verl requests, logs, and reports.",
     )
     parser.add_argument(
         "--teacher-mode",
-        choices=["oracle", "file"],
-        default="oracle",
-        help="Teacher ranking source: oracle (gold-first) or file (teacher_rankings.jsonl).",
+        choices=["online", "oracle", "file"],
+        default=None,
+        help="Teacher backend override. Default comes from --config.",
     )
     parser.add_argument(
         "--teacher-rankings",
         default="",
         help="Path to teacher ranking jsonl when --teacher-mode file.",
+    )
+    parser.add_argument(
+        "--teacher-base-url",
+        default="",
+        help="Override teacher.base_url from config.",
+    )
+    parser.add_argument(
+        "--teacher-model",
+        default="",
+        help="Override teacher.model from config.",
+    )
+    parser.add_argument(
+        "--teacher-api-key-env",
+        default="",
+        help="Override teacher.api_key_env from config.",
+    )
+    parser.add_argument(
+        "--teacher-timeout-sec",
+        type=float,
+        default=None,
+        help="Override teacher.timeout_sec from config.",
+    )
+    parser.add_argument(
+        "--teacher-rubric-id",
+        default="",
+        help="Override teacher.rubric_id from config.",
+    )
+    parser.add_argument(
+        "--teacher-max-batch-size",
+        type=int,
+        default=None,
+        help="Override teacher.max_batch_size from config.",
     )
     parser.add_argument(
         "--teacher-source-dir",
@@ -41,16 +79,38 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
 
     parser.add_argument(
-        "--run-sft-update",
+        "--run-verl-update",
         action="store_true",
-        help="Run SFT update on generated GRPO examples.",
+        help="Deprecated compatibility flag. Direct verl update is already the default.",
     )
-    parser.add_argument("--model-name-or-path", default="", help="Required when --run-sft-update.")
+    parser.add_argument(
+        "--execute-verl-command",
+        action="store_true",
+        help="Deprecated compatibility flag kept for CLI stability.",
+    )
+    parser.add_argument(
+        "--verl-command-template",
+        default="",
+        help=(
+            "Deprecated compatibility flag. The direct-update path ignores this template."
+        ),
+    )
+    parser.add_argument(
+        "--export-only",
+        action="store_true",
+        help="Only export RL dataset and verl request artifacts; do not run the verl update.",
+    )
+
+    parser.add_argument(
+        "--model-name-or-path",
+        default="",
+        help="Policy model path override. Required unless config already provides model.path.",
+    )
     parser.add_argument(
         "--lora-target-modules",
         nargs="+",
         default=[],
-        help="Required when --run-sft-update, for example: q_proj v_proj.",
+        help="Required when --run-verl-update, for example: q_proj v_proj.",
     )
     parser.add_argument("--num-train-epochs", type=int, default=1)
     parser.add_argument("--per-device-train-batch-size", type=int, default=1)
@@ -81,14 +141,23 @@ def main() -> None:
     holdout_predictions = Path(args.holdout_predictions).resolve() if args.holdout_predictions.strip() else None
     report = train_controller_grpo(
         output_dir=Path(args.output_dir).resolve(),
+        config_path=Path(args.config).resolve(),
         teacher_mode=args.teacher_mode,
+        teacher_base_url=args.teacher_base_url or None,
+        teacher_model=args.teacher_model or None,
+        teacher_api_key_env=args.teacher_api_key_env or None,
+        teacher_timeout_sec=args.teacher_timeout_sec,
+        teacher_rubric_id=args.teacher_rubric_id or None,
+        teacher_max_batch_size=args.teacher_max_batch_size,
         teacher_rankings_path=ranking_path,
         teacher_source_dir=Path(args.teacher_source_dir).resolve(),
         runtime_root=Path(args.runtime_root).resolve(),
         num_candidates=args.num_candidates,
         keep_top_k=args.keep_top_k,
         seed=args.seed,
-        run_sft_update=bool(args.run_sft_update),
+        run_verl_update=True if args.run_verl_update else None,
+        execute_verl_command=bool(args.execute_verl_command),
+        verl_command_template=str(args.verl_command_template),
         model_name_or_path=args.model_name_or_path,
         lora_target_modules=list(args.lora_target_modules),
         num_train_epochs=args.num_train_epochs,
@@ -101,6 +170,7 @@ def main() -> None:
         lora_dropout=args.lora_dropout,
         holdout_records=holdout_records,
         holdout_predictions=holdout_predictions,
+        export_only=bool(args.export_only),
     )
     print(json.dumps(report, ensure_ascii=False, indent=2))
 

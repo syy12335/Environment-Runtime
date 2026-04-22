@@ -1,21 +1,29 @@
 from __future__ import annotations
 
 import copy
+import importlib.util
 import json
+import os
 import random
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
-from ..dataset import (
-    build_controller_train_records,
-    render_controller_prompt,
-    render_controller_target_text,
-    write_jsonl,
+import yaml
+
+from ..dataset import build_controller_train_records, render_controller_prompt, render_controller_target_text, write_jsonl
+from ..runtime_adapter import CONFIGS_ROOT, REPO_ROOT
+from ..types import TrainingRecord
+from .controller_grpo_teacher import (
+    DEFAULT_TEACHER_DATA_SOURCE,
+    judge_controller_group,
+    normalize_teacher_result,
+    resolve_teacher_config,
 )
-from ..types import SftExample, TrainingRecord
-from .controller_sft import train_controller_sft
 
 ALLOWED_ACTION_KINDS = {"observe", "generate_task"}
+DEFAULT_GRPO_CONFIG_PATH = CONFIGS_ROOT / "controller_grpo_online.yaml"
 
 
 def validate_controller_action(action: dict[str, Any]) -> tuple[bool, list[str]]:
@@ -48,27 +56,37 @@ def build_grpo_rollout_groups(
     records: list[TrainingRecord],
     num_candidates: int,
     seed: int,
+    rollout_mode: str = "debug_gold_mutate",
 ) -> list[dict[str, Any]]:
     if num_candidates < 2:
         raise ValueError("num_candidates must be >= 2")
+
+    normalized_mode = str(rollout_mode).strip().lower() or "debug_gold_mutate"
+    if normalized_mode != "debug_gold_mutate":
+        raise ValueError(
+            "build_grpo_rollout_groups is a debug/audit helper only and currently supports rollout_mode=debug_gold_mutate"
+        )
+
     rng = random.Random(seed)
     groups: list[dict[str, Any]] = []
     for index, record in enumerate(records, start=1):
         if record.role != "controller":
             continue
-        group_id = f"group_{index:05d}_{record.sample_id}"
-        candidates = _build_candidates_for_record(
+        prompt_text = render_controller_prompt(record.state_input)
+        group_id = _build_group_id(index=index, sample_id=record.sample_id)
+        candidates = _build_debug_candidates_for_record(
             record=record,
             num_candidates=num_candidates,
             rng=rng,
+            rollout_mode=normalized_mode,
         )
         groups.append(
             {
                 "group_id": group_id,
                 "sample_id": record.sample_id,
                 "split": record.split,
+                "prompt": prompt_text,
                 "state_input": copy.deepcopy(record.state_input),
-                "gold_output": copy.deepcopy(record.gold_output),
                 "metadata": copy.deepcopy(record.metadata),
                 "candidates": candidates,
             }
@@ -81,15 +99,16 @@ def build_teacher_rankings(
     groups: list[dict[str, Any]],
     mode: str,
     ranking_path: Path | None = None,
+    teacher_config: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    normalized_mode = mode.strip().lower()
+    normalized_mode = str(mode).strip().lower()
     if normalized_mode == "oracle":
         return [
             {
                 "group_id": str(group.get("group_id", "")),
                 "ranking": [str(item.get("candidate_id", "")) for item in group.get("candidates", [])],
                 "confidence": 1.0,
-                "reason": "oracle ranking uses gold-first candidate construction",
+                "reason": "oracle ranking preserves candidate order",
             }
             for group in groups
         ]
@@ -106,7 +125,27 @@ def build_teacher_rankings(
                 raise ValueError(f"teacher ranking row must be object: {ranking_path}")
             rows.append(payload)
         return rows
-    raise ValueError(f"unsupported teacher mode: {mode}")
+    if normalized_mode != "online":
+        raise ValueError(f"unsupported teacher mode: {mode}")
+
+    if teacher_config is None:
+        config = _load_training_config(DEFAULT_GRPO_CONFIG_PATH)
+        teacher_config = resolve_teacher_config(config)
+    else:
+        teacher_config = resolve_teacher_config({"teacher": teacher_config})
+
+    rankings: list[dict[str, Any]] = []
+    for group in groups:
+        rankings.append(
+            judge_controller_group(
+                group_id=str(group.get("group_id", "")),
+                state_input=copy.deepcopy(group.get("state_input", {})),
+                prompt_text=str(group.get("prompt", "")),
+                candidates=list(group.get("candidates", [])),
+                teacher_config=teacher_config,
+            )
+        )
+    return rankings
 
 
 def validate_teacher_rankings(
@@ -125,97 +164,35 @@ def validate_teacher_rankings(
         ranking_row = rankings_by_group.get(group_id)
         if ranking_row is None:
             raise ValueError(f"missing teacher ranking for group: {group_id}")
-        ranking = ranking_row.get("ranking", [])
-        if not isinstance(ranking, list) or not ranking:
-            raise ValueError(f"ranking must be non-empty list: {group_id}")
         candidate_ids = [str(item.get("candidate_id", "")) for item in group.get("candidates", [])]
-        ranking_ids = [str(item).strip() for item in ranking]
-        if len(set(ranking_ids)) != len(ranking_ids):
-            raise ValueError(f"ranking contains duplicate candidate ids: {group_id}")
-        if set(ranking_ids) != set(candidate_ids):
-            raise ValueError(
-                f"ranking candidate ids mismatch for {group_id}: expected {sorted(candidate_ids)}, got {sorted(ranking_ids)}"
-            )
-        validated[group_id] = {
-            "group_id": group_id,
-            "ranking": ranking_ids,
-            "confidence": float(ranking_row.get("confidence", 1.0)),
-            "reason": str(ranking_row.get("reason", "")),
-        }
+        validated[group_id] = normalize_teacher_result(
+            group_id=group_id,
+            raw_result=ranking_row,
+            candidate_ids=candidate_ids,
+        )
     return validated
-
-
-def build_grpo_examples(
-    *,
-    groups: list[dict[str, Any]],
-    rankings_by_group: dict[str, dict[str, Any]],
-    keep_top_k: int,
-) -> tuple[list[SftExample], list[SftExample], list[dict[str, Any]]]:
-    train_examples: list[SftExample] = []
-    eval_examples: list[SftExample] = []
-    audit_rows: list[dict[str, Any]] = []
-
-    for group in groups:
-        group_id = str(group.get("group_id", ""))
-        split = str(group.get("split", "train")).strip() or "train"
-        ranking = rankings_by_group[group_id]["ranking"]
-        candidates = {
-            str(item.get("candidate_id", "")): item
-            for item in group.get("candidates", [])
-            if str(item.get("candidate_id", ""))
-        }
-        top_ids = ranking[: max(1, min(keep_top_k, len(ranking)))]
-
-        for rank_index, candidate_id in enumerate(top_ids):
-            candidate = candidates[candidate_id]
-            action = candidate.get("action", {})
-            prompt = render_controller_prompt(group.get("state_input", {}))
-            target_text = render_controller_target_text(action if isinstance(action, dict) else {})
-            advantage = _rank_to_advantage(rank_index=rank_index, size=len(ranking))
-            row = SftExample(
-                sample_id=f"{group.get('sample_id', '')}#{candidate_id}",
-                split=split,
-                prompt=prompt,
-                target_text=target_text,
-                metadata={
-                    "terminal": bool(group.get("metadata", {}).get("terminal", False)),
-                    "grpo_group_id": group_id,
-                    "grpo_rank": rank_index + 1,
-                    "grpo_advantage": round(advantage, 6),
-                    "candidate_id": candidate_id,
-                },
-            )
-            if split == "eval":
-                eval_examples.append(row)
-            else:
-                train_examples.append(row)
-
-            audit_rows.append(
-                {
-                    "group_id": group_id,
-                    "sample_id": group.get("sample_id", ""),
-                    "split": split,
-                    "candidate_id": candidate_id,
-                    "rank": rank_index + 1,
-                    "advantage": round(advantage, 6),
-                    "action": copy.deepcopy(action),
-                }
-            )
-
-    return train_examples, eval_examples, audit_rows
 
 
 def train_controller_grpo(
     *,
     output_dir: Path,
-    teacher_mode: str = "oracle",
+    config_path: Path | None = None,
+    teacher_mode: str | None = None,
+    teacher_base_url: str | None = None,
+    teacher_model: str | None = None,
+    teacher_api_key_env: str | None = None,
+    teacher_timeout_sec: float | None = None,
+    teacher_rubric_id: str | None = None,
+    teacher_max_batch_size: int | None = None,
     teacher_rankings_path: Path | None = None,
     teacher_source_dir: Path | None = None,
     runtime_root: Path | None = None,
-    num_candidates: int = 4,
+    num_candidates: int | None = None,
     keep_top_k: int = 2,
     seed: int = 42,
-    run_sft_update: bool = False,
+    run_verl_update: bool | None = None,
+    execute_verl_command: bool = False,
+    verl_command_template: str = "",
     model_name_or_path: str = "",
     lora_target_modules: list[str] | None = None,
     num_train_epochs: int = 1,
@@ -228,111 +205,168 @@ def train_controller_grpo(
     lora_dropout: float = 0.05,
     holdout_records: Path | None = None,
     holdout_predictions: Path | None = None,
+    export_only: bool = False,
 ) -> dict[str, Any]:
+    del keep_top_k
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    records, _ = build_controller_train_records(
-        teacher_source_dir=teacher_source_dir,
-        workspace_root=runtime_root,
-    )
-    groups = build_grpo_rollout_groups(
-        records=records,
+    repo_root = (runtime_root or REPO_ROOT).resolve()
+    effective_config = _load_training_config(config_path or DEFAULT_GRPO_CONFIG_PATH)
+    _apply_training_overrides(
+        config=effective_config,
+        teacher_mode=teacher_mode,
+        teacher_base_url=teacher_base_url,
+        teacher_model=teacher_model,
+        teacher_api_key_env=teacher_api_key_env,
+        teacher_timeout_sec=teacher_timeout_sec,
+        teacher_rubric_id=teacher_rubric_id,
+        teacher_max_batch_size=teacher_max_batch_size,
+        teacher_rankings_path=teacher_rankings_path,
         num_candidates=num_candidates,
+        model_name_or_path=model_name_or_path,
+        lora_target_modules=lora_target_modules,
+        num_train_epochs=num_train_epochs,
+        per_device_train_batch_size=per_device_train_batch_size,
+        gradient_accumulation_steps=gradient_accumulation_steps,
+        learning_rate=learning_rate,
+        max_seq_length=max_seq_length,
+        lora_r=lora_r,
+        lora_alpha=lora_alpha,
+        lora_dropout=lora_dropout,
         seed=seed,
     )
-    rankings = build_teacher_rankings(
-        groups=groups,
-        mode=teacher_mode,
-        ranking_path=teacher_rankings_path,
+    teacher_config = resolve_teacher_config(effective_config)
+
+    if str(teacher_config.get("mode", "")).strip().lower() != "online":
+        raise ValueError("default training path only supports teacher.mode=online; use debug helpers for oracle/file")
+    if str(effective_config.get("update", {}).get("backend", "")).strip().lower() != "verl":
+        raise ValueError("default training path only supports update.backend=verl")
+    if str(effective_config.get("rollout", {}).get("backend", "")).strip().lower() != "sglang":
+        raise ValueError("default training path only supports rollout.backend=sglang")
+
+    model_path = str(effective_config.get("model", {}).get("path", "")).strip()
+    if not model_path:
+        raise ValueError("model.path or --model-name-or-path is required")
+
+    records, manifest = build_controller_train_records(
+        teacher_source_dir=teacher_source_dir,
+        workspace_root=repo_root,
     )
-    rankings_by_group = validate_teacher_rankings(groups=groups, rankings=rankings)
-    train_examples, eval_examples, audit_rows = build_grpo_examples(
-        groups=groups,
-        rankings_by_group=rankings_by_group,
-        keep_top_k=keep_top_k,
+    controller_records = [record for record in records if record.role == "controller"]
+
+    dataset_paths = _write_verl_rl_dataset(
+        records=controller_records,
+        output_dir=output_dir,
+        num_candidates=int(effective_config["rollout"]["num_candidates"]),
+        teacher_context={
+            "mode": str(teacher_config["mode"]),
+            "model": str(teacher_config.get("model", "")),
+            "rubric_id": str(teacher_config.get("rubric_id", "")),
+            "base_url": str(teacher_config.get("base_url", "")),
+        },
     )
 
-    rollout_path = output_dir / "grpo_rollout_groups.jsonl"
-    rankings_path = output_dir / "teacher_rankings.jsonl"
-    train_examples_path = output_dir / "grpo_train_examples.jsonl"
-    eval_examples_path = output_dir / "grpo_eval_examples.jsonl"
-    audit_path = output_dir / "grpo_audit_rows.jsonl"
+    runtime_config_payload = {
+        "seed": int(effective_config.get("seed", seed)),
+        "teacher": copy.deepcopy(effective_config["teacher"]),
+        "rollout": copy.deepcopy(effective_config["rollout"]),
+        "update": copy.deepcopy(effective_config["update"]),
+        "debug": copy.deepcopy(effective_config.get("debug", {})),
+        "audit": copy.deepcopy(effective_config.get("audit", {})),
+    }
+    runtime_config_path = output_dir / "controller_grpo_runtime_config.json"
+    runtime_config_path.write_text(
+        json.dumps(runtime_config_payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
-    write_jsonl(rollout_path, groups)
-    write_jsonl(rankings_path, list(rankings_by_group.values()))
-    write_jsonl(train_examples_path, train_examples)
-    write_jsonl(eval_examples_path, eval_examples)
-    write_jsonl(audit_path, audit_rows)
+    compatibility_warnings: list[str] = []
+    if execute_verl_command:
+        compatibility_warnings.append("--execute-verl-command is deprecated; updates now execute directly by default.")
+    if verl_command_template.strip():
+        compatibility_warnings.append("--verl-command-template is deprecated and ignored in the direct-update path.")
 
+    audit_paths: dict[str, str] = {}
+    if bool(effective_config.get("audit", {}).get("export_rollout_preview", False)):
+        if not bool(effective_config.get("debug", {}).get("allow_gold_mutate", False)):
+            raise ValueError("audit.export_rollout_preview requires debug.allow_gold_mutate=true")
+        preview_groups = build_grpo_rollout_groups(
+            records=controller_records,
+            num_candidates=int(effective_config["rollout"]["num_candidates"]),
+            seed=int(effective_config.get("seed", seed)),
+        )
+        preview_path = output_dir / "grpo_rollout_groups.debug.jsonl"
+        write_jsonl(preview_path, preview_groups)
+        audit_paths["rollout_preview_path"] = str(preview_path)
+
+    overrides = _build_verl_overrides(
+        config=effective_config,
+        train_dataset_path=dataset_paths["train_path"],
+        eval_dataset_path=dataset_paths["eval_path"],
+        reward_manager_path=(repo_root / "src" / "task_router_graph_train" / "train" / "controller_grpo_reward.py"),
+    )
+    overrides_path = output_dir / "verl_hydra_overrides.json"
+    overrides_path.write_text(json.dumps(overrides, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    request_payload = {
+        "trainer_backend": "verl",
+        "execution_mode": "export_only" if export_only or run_verl_update is False else "direct_update",
+        "runtime_config_path": str(runtime_config_path),
+        "train_dataset_path": str(dataset_paths["train_path"]),
+        "eval_dataset_path": str(dataset_paths["eval_path"]),
+        "rollout_backend": str(effective_config["rollout"]["backend"]),
+        "teacher_backend": str(teacher_config["mode"]),
+        "update_backend": str(effective_config["update"]["backend"]),
+        "hydra_overrides": list(overrides),
+    }
+    request_path = output_dir / "verl_training_request.json"
+    request_path.write_text(json.dumps(request_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    should_run_update = not export_only and run_verl_update is not False
     training_report: dict[str, Any] = {
-        "run_sft_update": bool(run_sft_update),
+        "trainer_backend": "verl",
+        "execution_mode": "direct_update" if should_run_update else "export_only",
         "output_dir": str(output_dir),
-        "rollout_groups_path": str(rollout_path),
-        "teacher_rankings_path": str(rankings_path),
-        "train_examples_path": str(train_examples_path),
-        "eval_examples_path": str(eval_examples_path),
-        "audit_rows_path": str(audit_path),
-        "group_count": len(groups),
-        "train_example_count": len(train_examples),
-        "eval_example_count": len(eval_examples),
-        "num_candidates": num_candidates,
-        "keep_top_k": keep_top_k,
-        "teacher_mode": teacher_mode,
+        "config_path": str((config_path or DEFAULT_GRPO_CONFIG_PATH).resolve()),
+        "runtime_config_path": str(runtime_config_path),
+        "rollout_backend": str(effective_config["rollout"]["backend"]),
+        "teacher_backend": str(teacher_config["mode"]),
+        "teacher_mode": str(teacher_config["mode"]),
+        "teacher_model": str(teacher_config.get("model", "")),
+        "update_backend": str(effective_config["update"]["backend"]),
+        "train_dataset_path": str(dataset_paths["train_path"]),
+        "eval_dataset_path": str(dataset_paths["eval_path"]),
+        "verl_training_request_path": str(request_path),
+        "verl_hydra_overrides_path": str(overrides_path),
+        "group_count": len(controller_records),
+        "counts_by_split": dict(dataset_paths["counts_by_split"]),
+        "record_manifest": manifest,
+        "num_candidates": int(effective_config["rollout"]["num_candidates"]),
+        "seed": int(effective_config.get("seed", seed)),
+        "compatibility_warnings": compatibility_warnings,
+        "audit_paths": audit_paths,
     }
 
-    if run_sft_update:
-        if not model_name_or_path.strip():
-            raise ValueError("model_name_or_path is required when run_sft_update is true")
-        if not lora_target_modules:
-            raise ValueError("lora_target_modules is required when run_sft_update is true")
-        adapter_output_dir = output_dir / "adapter"
-        sft_report = train_controller_sft(
-            model_name_or_path=model_name_or_path,
-            lora_target_modules=list(lora_target_modules),
-            train_examples=train_examples_path,
-            eval_examples=eval_examples_path,
-            output_dir=adapter_output_dir,
-            num_train_epochs=num_train_epochs,
-            per_device_train_batch_size=per_device_train_batch_size,
-            gradient_accumulation_steps=gradient_accumulation_steps,
-            learning_rate=learning_rate,
-            max_seq_length=max_seq_length,
-            lora_r=lora_r,
-            lora_alpha=lora_alpha,
-            lora_dropout=lora_dropout,
-            seed=seed,
+    if should_run_update:
+        training_report["verl_update_report"] = _run_verl_training(
+            output_dir=output_dir,
+            hydra_overrides=overrides,
+            runtime_config_path=runtime_config_path,
+            repo_root=repo_root,
         )
-        training_report["sft_update_report"] = sft_report
+    else:
+        training_report["verl_update_report"] = {
+            "status": "prepared_only",
+            "reason": "export_only=true or run_verl_update=false",
+        }
+    training_report["verl_update_status"] = str(training_report["verl_update_report"].get("status", "unknown"))
 
     if holdout_records is not None and holdout_predictions is not None:
-        try:
-            from ..eval import evaluate_prediction_records
-
-            monitor_report = evaluate_prediction_records(
-                record_path=holdout_records,
-                prediction_path=holdout_predictions,
-            )
-            monitor_dir = output_dir / "holdout_monitor"
-            monitor_dir.mkdir(parents=True, exist_ok=True)
-            (monitor_dir / "metrics_summary.json").write_text(
-                json.dumps(monitor_report["metrics_summary"], ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8",
-            )
-            (monitor_dir / "metrics_by_error_code.json").write_text(
-                json.dumps(monitor_report["metrics_by_error_code"], ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8",
-            )
-            training_report["holdout_monitoring"] = {
-                "enabled": True,
-                "record_path": str(holdout_records),
-                "prediction_path": str(holdout_predictions),
-                "output_dir": str(monitor_dir),
-            }
-        except Exception as exc:  # pragma: no cover - best effort monitoring
-            training_report["holdout_monitoring"] = {
-                "enabled": False,
-                "error": str(exc),
-            }
+        training_report["holdout_monitoring"] = _run_holdout_monitoring(
+            output_dir=output_dir,
+            holdout_records=holdout_records,
+            holdout_predictions=holdout_predictions,
+        )
     else:
         training_report["holdout_monitoring"] = {
             "enabled": False,
@@ -340,16 +374,356 @@ def train_controller_grpo(
         }
 
     report_path = output_dir / "grpo_train_report.json"
-    report_path.write_text(json.dumps(training_report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     training_report["report_path"] = str(report_path)
+    report_path.write_text(json.dumps(training_report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return training_report
 
 
-def _build_candidates_for_record(
+def _apply_training_overrides(
+    *,
+    config: dict[str, Any],
+    teacher_mode: str | None,
+    teacher_base_url: str | None,
+    teacher_model: str | None,
+    teacher_api_key_env: str | None,
+    teacher_timeout_sec: float | None,
+    teacher_rubric_id: str | None,
+    teacher_max_batch_size: int | None,
+    teacher_rankings_path: Path | None,
+    num_candidates: int | None,
+    model_name_or_path: str,
+    lora_target_modules: list[str] | None,
+    num_train_epochs: int,
+    per_device_train_batch_size: int,
+    gradient_accumulation_steps: int,
+    learning_rate: float,
+    max_seq_length: int,
+    lora_r: int,
+    lora_alpha: int,
+    lora_dropout: float,
+    seed: int,
+) -> None:
+    config["seed"] = int(seed)
+
+    teacher_cfg = dict(config.get("teacher", {}))
+    if teacher_mode is not None:
+        teacher_cfg["mode"] = teacher_mode
+    if teacher_base_url is not None and teacher_base_url.strip():
+        teacher_cfg["base_url"] = teacher_base_url.strip()
+    if teacher_model is not None and teacher_model.strip():
+        teacher_cfg["model"] = teacher_model.strip()
+    if teacher_api_key_env is not None and teacher_api_key_env.strip():
+        teacher_cfg["api_key_env"] = teacher_api_key_env.strip()
+    if teacher_timeout_sec is not None:
+        teacher_cfg["timeout_sec"] = float(teacher_timeout_sec)
+    if teacher_rubric_id is not None and teacher_rubric_id.strip():
+        teacher_cfg["rubric_id"] = teacher_rubric_id.strip()
+    if teacher_max_batch_size is not None:
+        teacher_cfg["max_batch_size"] = int(teacher_max_batch_size)
+    if teacher_rankings_path is not None:
+        teacher_cfg["ranking_path"] = str(teacher_rankings_path)
+    config["teacher"] = teacher_cfg
+
+    rollout_cfg = dict(config.get("rollout", {}))
+    if num_candidates is not None:
+        rollout_cfg["num_candidates"] = int(num_candidates)
+    config["rollout"] = rollout_cfg
+
+    model_cfg = dict(config.get("model", {}))
+    if model_name_or_path.strip():
+        model_cfg["path"] = model_name_or_path.strip()
+    if lora_target_modules:
+        model_cfg["target_modules"] = list(lora_target_modules)
+    model_cfg["lora_rank"] = int(lora_r)
+    model_cfg["lora_alpha"] = int(lora_alpha)
+    model_cfg["lora_dropout"] = float(lora_dropout)
+    config["model"] = model_cfg
+
+    update_cfg = dict(config.get("update", {}))
+    update_cfg["total_epochs"] = int(num_train_epochs)
+    update_cfg["learning_rate"] = float(learning_rate)
+    update_cfg["per_device_train_batch_size"] = int(per_device_train_batch_size)
+    update_cfg["gradient_accumulation_steps"] = int(gradient_accumulation_steps)
+    update_cfg["train_batch_size"] = max(
+        int(update_cfg.get("train_batch_size", 0)),
+        int(per_device_train_batch_size) * max(1, int(gradient_accumulation_steps)),
+    )
+    config["update"] = update_cfg
+
+    data_cfg = dict(config.get("data", {}))
+    data_cfg["max_prompt_length"] = int(max_seq_length)
+    data_cfg["max_response_length"] = int(rollout_cfg.get("max_tokens", data_cfg.get("max_response_length", 512)))
+    data_cfg["train_batch_size"] = int(update_cfg["train_batch_size"])
+    data_cfg["val_batch_size"] = int(update_cfg.get("val_batch_size", data_cfg.get("val_batch_size", 4)))
+    config["data"] = data_cfg
+
+
+def _load_training_config(config_path: Path) -> dict[str, Any]:
+    path = Path(config_path).resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"GRPO config not found: {path}")
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(payload, dict):
+        raise ValueError(f"GRPO config must be a mapping: {path}")
+    return copy.deepcopy(payload)
+
+
+def _write_verl_rl_dataset(
+    *,
+    records: list[TrainingRecord],
+    output_dir: Path,
+    num_candidates: int,
+    teacher_context: dict[str, Any],
+) -> dict[str, Any]:
+    train_rows: list[dict[str, Any]] = []
+    eval_rows: list[dict[str, Any]] = []
+    counts_by_split = {"train": 0, "eval": 0}
+
+    for index, record in enumerate(records, start=1):
+        prompt_text = render_controller_prompt(record.state_input)
+        prompt_messages = [{"role": "user", "content": prompt_text}]
+        group_id = _build_group_id(index=index, sample_id=record.sample_id)
+        row = {
+            "prompt": prompt_messages,
+            "data_source": DEFAULT_TEACHER_DATA_SOURCE,
+            "reward_model": {"ground_truth": None},
+            "uid": group_id,
+            "extra_info": {
+                "index": index - 1,
+                "group_id": group_id,
+                "sample_id": record.sample_id,
+                "split": record.split,
+                "state_input": copy.deepcopy(record.state_input),
+                "prompt_text": prompt_text,
+                "prompt_messages": copy.deepcopy(prompt_messages),
+                "num_candidates": num_candidates,
+                "teacher_context": copy.deepcopy(teacher_context),
+                "metadata": copy.deepcopy(record.metadata),
+                "gold_output": copy.deepcopy(record.gold_output),
+            },
+        }
+        if record.split == "eval":
+            eval_rows.append(row)
+            counts_by_split["eval"] += 1
+        else:
+            train_rows.append(row)
+            counts_by_split["train"] += 1
+
+    train_path = output_dir / "verl_rl_train.jsonl"
+    eval_path = output_dir / "verl_rl_eval.jsonl"
+    write_jsonl(train_path, train_rows)
+    write_jsonl(eval_path, eval_rows)
+    return {
+        "train_path": train_path,
+        "eval_path": eval_path,
+        "counts_by_split": counts_by_split,
+    }
+
+
+def _build_verl_overrides(
+    *,
+    config: dict[str, Any],
+    train_dataset_path: Path,
+    eval_dataset_path: Path,
+    reward_manager_path: Path,
+) -> list[str]:
+    model_cfg = config["model"]
+    rollout_cfg = config["rollout"]
+    update_cfg = config["update"]
+    data_cfg = config["data"]
+    reward_manager_path = reward_manager_path.resolve()
+
+    overrides = [
+        _hydra_override("trainer.project_name", "task_router_graph_train"),
+        _hydra_override("trainer.experiment_name", "controller_grpo_online"),
+        _hydra_override("trainer.logger", list(update_cfg.get("logger", ["console"]))),
+        _hydra_override("trainer.nnodes", int(update_cfg.get("nnodes", 1))),
+        _hydra_override("trainer.n_gpus_per_node", int(update_cfg.get("n_gpus_per_node", 1))),
+        _hydra_override("trainer.total_epochs", int(update_cfg.get("total_epochs", 1))),
+        _hydra_override("trainer.val_before_train", bool(update_cfg.get("val_before_train", False))),
+        _hydra_override("trainer.test_freq", int(update_cfg.get("test_freq", -1))),
+        _hydra_override("trainer.save_freq", int(update_cfg.get("save_freq", -1))),
+        _hydra_override("trainer.resume_mode", str(update_cfg.get("resume_mode", "disable"))),
+        _hydra_override("algorithm.adv_estimator", str(update_cfg.get("adv_estimator", "grpo"))),
+        _hydra_override(
+            "algorithm.norm_adv_by_std_in_grpo",
+            bool(update_cfg.get("norm_adv_by_std_in_grpo", True)),
+        ),
+        _hydra_override("data.train_files", [str(train_dataset_path.resolve())]),
+        _hydra_override("data.val_files", [str(eval_dataset_path.resolve())]),
+        _hydra_override("data.train_batch_size", int(data_cfg["train_batch_size"])),
+        _hydra_override("data.val_batch_size", int(data_cfg["val_batch_size"])),
+        _hydra_override("data.max_prompt_length", int(data_cfg["max_prompt_length"])),
+        _hydra_override("data.max_response_length", int(data_cfg["max_response_length"])),
+        _hydra_override("data.dataloader_num_workers", int(data_cfg.get("dataloader_num_workers", 0))),
+        _hydra_override("data.prompt_key", str(data_cfg.get("prompt_key", "prompt"))),
+        _hydra_override("data.reward_fn_key", str(data_cfg.get("reward_fn_key", "data_source"))),
+        _hydra_override("data.return_raw_chat", bool(data_cfg.get("return_raw_chat", True))),
+        _hydra_override(
+            "data.filter_overlong_prompts",
+            bool(data_cfg.get("filter_overlong_prompts", False)),
+        ),
+        _hydra_override("actor_rollout_ref.model.path", str(model_cfg["path"])),
+        _hydra_override(
+            "actor_rollout_ref.model.trust_remote_code",
+            bool(model_cfg.get("trust_remote_code", False)),
+        ),
+        _hydra_override("actor_rollout_ref.model.lora_rank", int(model_cfg.get("lora_rank", 8))),
+        _hydra_override("actor_rollout_ref.model.lora_alpha", int(model_cfg.get("lora_alpha", 16))),
+        _hydra_override("actor_rollout_ref.model.target_modules", model_cfg.get("target_modules", ["q_proj", "v_proj"])),
+        _hydra_override("actor_rollout_ref.actor.rollout_n", int(rollout_cfg["num_candidates"])),
+        _hydra_override("actor_rollout_ref.actor.ppo_mini_batch_size", int(data_cfg["train_batch_size"])),
+        _hydra_override(
+            "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu",
+            int(update_cfg.get("per_device_train_batch_size", 1)),
+        ),
+        _hydra_override("actor_rollout_ref.actor.optim.lr", float(update_cfg["learning_rate"])),
+        _hydra_override("actor_rollout_ref.actor.use_kl_loss", bool(update_cfg.get("use_kl_loss", True))),
+        _hydra_override("actor_rollout_ref.rollout.name", str(rollout_cfg.get("backend", "sglang"))),
+        _hydra_override("actor_rollout_ref.rollout.load_format", str(rollout_cfg.get("load_format", "hf"))),
+        _hydra_override("actor_rollout_ref.rollout.n", int(rollout_cfg["num_candidates"])),
+        _hydra_override("actor_rollout_ref.rollout.do_sample", True),
+        _hydra_override("actor_rollout_ref.rollout.temperature", float(rollout_cfg.get("temperature", 1.0))),
+        _hydra_override("actor_rollout_ref.rollout.top_p", float(rollout_cfg.get("top_p", 1.0))),
+        _hydra_override("actor_rollout_ref.rollout.top_k", int(rollout_cfg.get("top_k", -1))),
+        _hydra_override("actor_rollout_ref.rollout.response_length", int(rollout_cfg.get("max_tokens", 512))),
+        _hydra_override("actor_rollout_ref.rollout.prompt_length", int(data_cfg["max_prompt_length"])),
+        _hydra_override(
+            "actor_rollout_ref.rollout.gpu_memory_utilization",
+            float(rollout_cfg.get("gpu_memory_utilization", 0.5)),
+        ),
+        _hydra_override(
+            "actor_rollout_ref.rollout.tensor_model_parallel_size",
+            int(rollout_cfg.get("tensor_model_parallel_size", 1)),
+        ),
+        _hydra_override(
+            "actor_rollout_ref.rollout.data_parallel_size",
+            int(rollout_cfg.get("data_parallel_size", 1)),
+        ),
+        _hydra_override(
+            "actor_rollout_ref.rollout.max_num_batched_tokens",
+            int(rollout_cfg.get("max_num_batched_tokens", 8192)),
+        ),
+        _hydra_override(
+            "actor_rollout_ref.rollout.max_num_seqs",
+            int(rollout_cfg.get("max_num_seqs", 256)),
+        ),
+        _hydra_override("reward.num_workers", 1),
+        _hydra_override("reward.reward_manager.source", "importlib"),
+        _hydra_override("reward.reward_manager.name", "ControllerGroupRewardManager"),
+        _hydra_override("reward.reward_manager.module.path", str(reward_manager_path)),
+        _hydra_override("reward.reward_model.enable", False),
+    ]
+    return overrides
+
+
+def _hydra_override(key: str, value: Any) -> str:
+    return f"{key}={_format_hydra_value(value)}"
+
+
+def _format_hydra_value(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, list):
+        return "[" + ",".join(_format_hydra_value(item) for item in value) + "]"
+    return json.dumps(str(value), ensure_ascii=False)
+
+
+def _run_verl_training(
+    *,
+    output_dir: Path,
+    hydra_overrides: list[str],
+    runtime_config_path: Path,
+    repo_root: Path,
+) -> dict[str, Any]:
+    if importlib.util.find_spec("verl") is None:
+        raise RuntimeError("verl is not installed in the current Python environment")
+
+    command = [sys.executable, "-m", "verl.trainer.main_ppo", *hydra_overrides]
+    env = os.environ.copy()
+    src_root = str((repo_root / "src").resolve())
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = src_root if not existing_pythonpath else src_root + os.pathsep + existing_pythonpath
+    env["TASK_ROUTER_GRPO_RUNTIME_CONFIG_PATH"] = str(runtime_config_path.resolve())
+
+    proc = subprocess.run(
+        command,
+        cwd=repo_root,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    stdout_log = output_dir / "verl_stdout.log"
+    stderr_log = output_dir / "verl_stderr.log"
+    stdout_log.write_text(proc.stdout or "", encoding="utf-8")
+    stderr_log.write_text(proc.stderr or "", encoding="utf-8")
+
+    if proc.returncode != 0:
+        raise RuntimeError(
+            "verl direct update failed with exit code "
+            f"{proc.returncode}. Check logs: {stdout_log} and {stderr_log}"
+        )
+
+    return {
+        "status": "completed",
+        "command": command,
+        "returncode": proc.returncode,
+        "stdout_log": str(stdout_log),
+        "stderr_log": str(stderr_log),
+    }
+
+
+def _run_holdout_monitoring(
+    *,
+    output_dir: Path,
+    holdout_records: Path,
+    holdout_predictions: Path,
+) -> dict[str, Any]:
+    try:
+        from ..eval import evaluate_prediction_records
+
+        monitor_report = evaluate_prediction_records(
+            record_path=holdout_records,
+            prediction_path=holdout_predictions,
+        )
+        monitor_dir = output_dir / "holdout_monitor"
+        monitor_dir.mkdir(parents=True, exist_ok=True)
+        (monitor_dir / "metrics_summary.json").write_text(
+            json.dumps(monitor_report["metrics_summary"], ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        (monitor_dir / "metrics_by_error_code.json").write_text(
+            json.dumps(monitor_report["metrics_by_error_code"], ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return {
+            "enabled": True,
+            "record_path": str(holdout_records),
+            "prediction_path": str(holdout_predictions),
+            "output_dir": str(monitor_dir),
+        }
+    except Exception as exc:  # pragma: no cover - best effort monitoring
+        return {
+            "enabled": False,
+            "error": str(exc),
+        }
+
+
+def _build_group_id(*, index: int, sample_id: str) -> str:
+    return f"group_{index:05d}_{sample_id}"
+
+
+def _build_debug_candidates_for_record(
     *,
     record: TrainingRecord,
     num_candidates: int,
     rng: random.Random,
+    rollout_mode: str,
 ) -> list[dict[str, Any]]:
     gold = copy.deepcopy(record.gold_output)
     candidates: list[dict[str, Any]] = []
@@ -361,7 +735,12 @@ def _build_candidates_for_record(
             {
                 "candidate_id": candidate_id,
                 "source": source,
+                "raw_text": render_controller_target_text(action),
                 "action": copy.deepcopy(action),
+                "sampling_metadata": {
+                    "rollout_mode": rollout_mode,
+                    "candidate_index": len(candidates),
+                },
                 "is_valid": valid,
                 "validation_errors": errors,
             }
@@ -369,8 +748,7 @@ def _build_candidates_for_record(
 
     append_candidate(gold, source="gold")
     while len(candidates) < num_candidates:
-        mutated = _mutate_action(gold, rng=rng)
-        append_candidate(mutated, source="mutation")
+        append_candidate(_mutate_action(gold, rng=rng), source="mutation")
     return candidates
 
 
@@ -436,12 +814,3 @@ def _mutate_action(action: dict[str, Any], *, rng: random.Random) -> dict[str, A
     mutated["reason"] = "action_kind 非法，作为坏候选示例。"
     mutated["action_kind"] = "invalid_kind"
     return mutated
-
-
-def _rank_to_advantage(*, rank_index: int, size: int) -> float:
-    if size <= 1:
-        return 0.0
-    center = (size - 1) / 2.0
-    if center <= 0:
-        return 0.0
-    return (center - float(rank_index)) / center
