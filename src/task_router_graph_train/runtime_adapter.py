@@ -28,7 +28,7 @@ def build_controller_state_input(
     environment = Environment.from_dict(copy.deepcopy(environment_payload))
     return {
         "USER_INPUT": str(user_input),
-        "TASKS_JSON": environment.build_controller_context(
+        "ENVIRONMENT_JSON": environment.build_controller_context(
             default_task_limit=5,
             compress=False,
         ),

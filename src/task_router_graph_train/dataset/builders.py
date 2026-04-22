@@ -350,9 +350,9 @@ def build_controller_sft_examples(records: list[TrainingRecord]) -> list[SftExam
 
 def render_controller_prompt(state_input: dict[str, Any]) -> str:
     user_input = str(state_input.get("USER_INPUT", ""))
-    tasks_payload = state_input.get("TASKS_JSON", {})
+    environment_payload = state_input.get("ENVIRONMENT_JSON", {})
     skills_index = str(state_input.get("SKILLS_INDEX", "")).strip()
-    tasks_json = json.dumps(tasks_payload, ensure_ascii=False, indent=2)
+    environment_json = json.dumps(environment_payload, ensure_ascii=False, indent=2)
     return "\n".join(
         [
             "你是 task_router_graph 的 controller。",
@@ -362,8 +362,8 @@ def render_controller_prompt(state_input: dict[str, Any]) -> str:
             "USER_INPUT",
             user_input,
             "",
-            "TASKS_JSON",
-            tasks_json,
+            "ENVIRONMENT_JSON",
+            environment_json,
             "",
             "SKILLS_INDEX",
             skills_index,

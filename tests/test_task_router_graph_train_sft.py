@@ -34,7 +34,7 @@ def test_build_controller_train_records_from_teacher_source() -> None:
     assert {record.reward_spec_id for record in records} == {"controller_v1"}
 
     sample = next(record for record in records if record.sample_id == "teacher_train_009_retry_failed_task_step1")
-    assert set(sample.state_input) == {"USER_INPUT", "TASKS_JSON", "SKILLS_INDEX"}
+    assert set(sample.state_input) == {"USER_INPUT", "ENVIRONMENT_JSON", "SKILLS_INDEX"}
     assert "running_refs" not in json.dumps(sample.state_input, ensure_ascii=False)
     assert sample.metadata["allowed_action_kinds"] == ["observe", "generate_task"]
     assert sample.gold_output["action_kind"] == "generate_task"
@@ -50,7 +50,7 @@ def test_build_controller_sft_examples_contains_prompt_sections() -> None:
     assert len(examples) == 16
     example = next(row for row in examples if row.sample_id == "teacher_eval_003_history_summary_step1")
     assert "USER_INPUT" in example.prompt
-    assert "TASKS_JSON" in example.prompt
+    assert "ENVIRONMENT_JSON" in example.prompt
     assert "SKILLS_INDEX" in example.prompt
     target_json = json.loads(example.target_text)
     assert isinstance(target_json, dict)

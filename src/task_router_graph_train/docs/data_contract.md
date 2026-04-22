@@ -45,7 +45,7 @@
 ```json
 {
   "USER_INPUT": "...",
-  "TASKS_JSON": {},
+  "ENVIRONMENT_JSON": {},
   "SKILLS_INDEX": "..."
 }
 ```

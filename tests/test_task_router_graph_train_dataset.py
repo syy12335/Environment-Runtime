@@ -86,8 +86,8 @@ def test_build_controller_state_input_uses_runtime_shape() -> None:
         workspace_root=REPO_ROOT,
     )
 
-    assert set(state_input) == {"USER_INPUT", "TASKS_JSON", "SKILLS_INDEX"}
-    tasks_json = state_input["TASKS_JSON"]
-    assert tasks_json["cur_round"] == 1
-    assert tasks_json["previous_failed_task"]["task"]["status"] == "failed"
+    assert set(state_input) == {"USER_INPUT", "ENVIRONMENT_JSON", "SKILLS_INDEX"}
+    environment_json = state_input["ENVIRONMENT_JSON"]
+    assert environment_json["cur_round"] == 1
+    assert environment_json["previous_failed_task"]["task"]["status"] == "failed"
     assert '"name"' in state_input["SKILLS_INDEX"]
