@@ -16,6 +16,15 @@
 | 2026-04-23 | `3b12394` | badcase-feedback: 新增回流资产构建与运行清单 | 新增 `build_feedback_assets(...)`、`harvest_failed_badcases(...)`、run-scoped `feedback_manifest.json`、feedback 资产索引与 failed badcase 回流闭环 |
 | 2026-04-23 | `5eb2a63` | teacher-config: 拆分 reward/reference/regression 三路 teacher 配置 | controller online config 中的 teacher 拆为 `reward_judge / reference_generator / regression_judge`，GRPO、feedback、regression 三条路径各自消费独立 teacher 角色 |
 | 2026-04-23 | `c196d76` | docs(task_router_graph_train): 补充 verl GRPO 训练说明 | `task_router_graph_train` 正式文档开始收口到当前单步 controller GRPO on verl 的实现边界 |
+| 2026-04-22 | `4f7e83f` | grpo-pipeline: 新增 Teacher-RM controller 后训练与回流闭环 | controller 后训练首次打通 `teacher ranking -> preference rows -> update` 主线，并把回流闭环正式纳入训练视角 |
+| 2026-04-22 | `88412b9` | sft-schema: 删除 step 字段并收敛 metadata（保留 terminal） | SFT record / example 结构进一步瘦身；`metadata` 聚焦 `terminal` 等当前真正有用的结构信息 |
+| 2026-04-22 | `c99a9d9` | sft-contract: 移除 reward spec 字段（manifest + records） | SFT 资产与 `reward_spec_id` 脱钩，reward spec 口径开始收口到 RL / Eval 路径，减少训练输入混杂字段 |
+| 2026-04-22 | `e442182` | refactor(sft-assets): 对齐 teacher_source 与构建链路说明 | teacher_source、records、examples 的构建说明与实际产物重新对齐，降低从数据真源到训练入口的理解成本 |
+| 2026-04-22 | `77aa573` | feat(reply): 强制显式提及 pyskill 完成事件 | reply 输出更稳定地暴露 pyskill 完成事实，减少“任务已经完成但回复没提到”的感知断层 |
+| 2026-04-22 | `69ff9cb` | fix(graph): scope status shortcut by target test type and configurable mock async sleep | 状态追问 shortcut 按目标 task type 收紧，mock async sleep 变为可配置，减少快捷汇总误触发 |
+| 2026-04-22 | `74c03bf` | docs(changelog): record ENVIRONMENT_JSON migration and skill updates | 首次把 `ENVIRONMENT_JSON` 迁移和 skill 体系更新写入 changelog，形成从 contract 变化到能力变化的显式记录 |
+| 2026-04-22 | `c5ebc57` | feat(time-range-info): refresh skill workflow and add training schemas | `time_range_info` skill 的 workflow、训练 schema 与文档同步刷新，为后续专题训练与策略化实验打底 |
+| 2026-04-22 | `d8fb1dc` | refactor(contract): rename TASKS_JSON to ENVIRONMENT_JSON across router pipeline | router pipeline 的关键输入名统一迁移到 `ENVIRONMENT_JSON`，让训练态 state 与运行时语义更一致 |
 | 2026-04-17 | - | 训练/运行拆分：RL 真源迁入 `task_router_graph_train` | 训练实现从 `task_router_graph` 运行时包移出；新增 `src/task_router_graph_train/` 承接 docs、assets、CLI、reward spec 与离线评测；项目根不再作为 RL v1 正式入口 |
 | 2026-04-16 | - | 数据口径重构：统一手工 holdout 与历史归档 | 后训练评测不再区分 mock/real；手工样本与正式 holdout 由训练模块内部资产目录承接；过时 `cases/environments/rl/mock` 迁移至 `data/archive_legacy/2026-04` |
 | 2026-04-16 | - | 后训练目标改为问题修复导向（真实轨迹优先） | RL 目标转向 formal `environment/task` 语义建模与修复决策；文档与评测规范迁入 `src/task_router_graph_train/docs/` |
@@ -42,8 +51,9 @@
 3. teacher 职责正式拆分为三路：`reward_judge / reference_generator / regression_judge`。
 4. badcase 回流开始具备 run-scoped manifest、coverage 面板和下一轮 failed harvest。
 5. 训练、评测、CLI 报告中的路径统一脱敏成 repo-relative 形式。
-6. 根 README 对外定位改成通用工程场景，`functest / accutest / perftest` 明确标为当前内置示例 task family。
-7. 运行入口进一步收紧，当前仅保留 CLI / case 方式，移除了 streamlit 实现与依赖。
+6. `TASKS_JSON -> ENVIRONMENT_JSON` 的输入命名迁移已经落地，训练态 state 与运行时 contract 更一致。
+7. 根 README 对外定位改成通用工程场景，`functest / accutest / perftest` 明确标为当前内置示例 task family。
+8. 运行入口进一步收紧，当前仅保留 CLI / case 方式，移除了 streamlit 实现与依赖。
 
 ## 建议阅读顺序
 

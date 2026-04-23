@@ -40,34 +40,63 @@ embedding:
       request_timeout_sec: 60
 
 paths:
+  # 默认 case 目录；run_case / run_cases 会从这里读取或推导输入。
   cases_dir: data/cases
+  # 运行产物根目录；environment、result、调试输出默认落在这里。
   run_root: var/runs
+  # 日志目录；CLI 与运行期日志默认写入这里。
   logs_dir: var/logs
+  # skill 根目录；运行时会从这里继续扫描 controller / executor 子目录。
   skills_root: src/task_router_graph/skills
 
 runtime:
+  # 是否落盘运行日志。
   save_logs: true
+  # 单次图运行允许的最大 round 数。
   max_rounds: 4
+  # 单个 task 在图内可持续推进的最大轮数；超过后进入收敛路径。
   max_task_turns: 4
+  # controller agent 的最大思考 / 调用步数。
   max_controller_steps: 3
+  # executor agent 的最大思考 / 调用步数。
   max_executor_steps: 4
+  # pyskill 运行超时时间（秒）；超时后会在收敛阶段标记 failed。
   pyskill_timeout_sec: 180
+  # controller 快捷路由配置文件。
   intent_shortcuts_config: configs/intent_shortcuts.yaml
+  # controller 未命中特定 task family 时的默认 task type。
   default_task_type: executor
+  # 同一任务允许的最大失败重试次数。
   max_failed_retries: 3
+  # 是否启用 agent memory 与上下文压缩。
   context_enabled: true
+  # 超过这个估算 token 数时触发上下文压缩。
   context_window_tokens: 3000
+  # 压缩后希望保留的摘要目标 token 数。
   context_summary_target_tokens: 700
+  # 至少经过多少步后才开始做上下文摘要。
   context_summary_min_step: 2
+  # 构建上下文视图时默认保留的最近 round 数。
   context_recent_rounds: 2
+  # 工具输出裁剪时保留的头部字符数。
   context_tool_trim_head_chars: 800
+  # 工具输出裁剪时保留的尾部字符数。
   context_tool_trim_tail_chars: 800
+  # 工具输出中间命中片段的最大保留段数。
   context_tool_mid_hits_max: 6
+  # 每个中间命中片段的目标字符数。
   context_tool_mid_hit_chars: 240
+  # `Environment` 视图裁剪后的目标 token 数。
   context_view_target_tokens: 600
+  # 是否启用历史摘要与 history shard 注入。
   context_history_enabled: true
+  # 历史详情模式下最多保留的 round 数。
   context_history_max_detail_rounds: 8
+  # 历史模式中强制保留最近 round 的数量。
   context_history_keep_recent_rounds: 4
+  # history summaries 的目标 token 数。
   context_history_summary_target_tokens: 700
+  # history meta summary 的目标 token 数。
   context_history_meta_target_tokens: 400
+  # 注入到当前视图中的最近 history shard 数量。
   context_history_inject_latest_shards: 2

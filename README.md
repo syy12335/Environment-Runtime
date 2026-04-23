@@ -144,28 +144,16 @@ pip install -r requirements.txt
 
 主配置文件：`configs/graph.yaml`
 
-常用配置摘录：
+常用运行参数已经直接写在 `configs/graph.yaml` 里，并附了中文注释。
 
-```yaml
-model:
-  provider: sglang
+建议直接打开这个文件查看：
 
-embedding:
-  provider: sglang
-
-runtime:
-  max_task_turns: 4
-  max_controller_steps: 3
-  max_executor_steps: 4
-  max_failed_retries: 3
-  pyskill_timeout_sec: 180
-  context_enabled: true
-  context_window_tokens: 3000
-  context_view_target_tokens: 600
-
-paths:
-  skills_root: src/task_router_graph/skills
-```
+- `model` / `embedding`
+  - 默认 provider 与后端配置
+- `paths`
+  - case、run、logs、skills 根路径
+- `runtime`
+  - task turn、agent step、pyskill timeout、memory 压缩等运行参数
 
 设置模型后端：
 
