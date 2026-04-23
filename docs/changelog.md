@@ -1,17 +1,27 @@
 # 近期更新对齐
 
-范围：2026-04-14 至 2026-04-17
+范围：2026-04-14 至 2026-04-24
 
 ## 时间线
 
 | 日期 | 提交 | 主题 | 影响面 |
 |---|---|---|---|
+| 2026-04-24 | `89248eb` | run: 移除 streamlit 入口并只保留 CLI | 删除 `scripts/run/streamlit_app.py`，移除 `requirements.txt` 中的 `streamlit` 依赖，README 的运行方式与目录说明同步收口到 CLI / case 入口 |
+| 2026-04-24 | `53b744f` | readme: 优化示例 task type 文案 | README 中反复出现的 `functest / accutest / perftest` 统一解释为当前仓的示例 task family，避免把框架定位误读成测试专用实现 |
+| 2026-04-23 | `30ecc39` | docs: 收口 README 与训练文档口径 | 根 README 与 `src/task_router_graph_train/docs/` 全面改写到当前闭环口径，统一为 manifest 安全输入、三路 teacher、badcase 回流、controller regression 与 repo-relative 路径输出 |
+| 2026-04-23 | `2f99f8e` | security(path): 脱敏绝对路径输出并收口训练报告路径 | 运行入口、训练报告、feedback manifest、regression/holdout run manifest 默认输出 repo-relative 路径，降低跨机器 diff 噪声与本机路径泄露风险 |
+| 2026-04-23 | `75e24be` | tests: 覆盖 badcase 回流与 manifest 输入校验 | 新增 badcase feedback loop、manifest 安全输入、结构约束相关测试，保证 `train_sft` / `train_grpo` 默认口径稳定 |
+| 2026-04-23 | `01ed73e` | train-entry: 用 manifest 收口 SFT/GRPO 安全输入 | `train_controller_sft(...)` 与 `train_controller_grpo(...)` 默认优先消费 `asset_manifest` / `run_dir`；直接路径 override 仅在显式开启 `allow_unsafe_path_input` 时可用 |
+| 2026-04-23 | `f6a3e45` | controller-regression: 接入独立 teacher 判分与覆盖率面板 | 新增 `evaluate_controller_regression(...)` 与对应 CLI，支持独立 `regression_judge`、evidence rows、按 bucket 汇总指标和 coverage 面板 |
+| 2026-04-23 | `3b12394` | badcase-feedback: 新增回流资产构建与运行清单 | 新增 `build_feedback_assets(...)`、`harvest_failed_badcases(...)`、run-scoped `feedback_manifest.json`、feedback 资产索引与 failed badcase 回流闭环 |
+| 2026-04-23 | `5eb2a63` | teacher-config: 拆分 reward/reference/regression 三路 teacher 配置 | controller online config 中的 teacher 拆为 `reward_judge / reference_generator / regression_judge`，GRPO、feedback、regression 三条路径各自消费独立 teacher 角色 |
+| 2026-04-23 | `c196d76` | docs(task_router_graph_train): 补充 verl GRPO 训练说明 | `task_router_graph_train` 正式文档开始收口到当前单步 controller GRPO on verl 的实现边界 |
 | 2026-04-17 | - | 训练/运行拆分：RL 真源迁入 `task_router_graph_train` | 训练实现从 `task_router_graph` 运行时包移出；新增 `src/task_router_graph_train/` 承接 docs、assets、CLI、reward spec 与离线评测；项目根不再作为 RL v1 正式入口 |
-| 2026-04-16 | - | 数据口径重构：统一手工 holdout 与历史归档 | 后训练评测不再区分 mock/real；手工样本与正式 holdout 现由训练模块内部资产目录承接；过时 `cases/environments/rl/mock` 迁移至 `data/archive_legacy/2026-04` |
-| 2026-04-16 | - | 后训练目标改为问题修复导向（真实轨迹优先） | RL 目标转向 formal `environment/task` 语义建模与修复决策；文档与评测规范已随训练模块迁移到 `src/task_router_graph_train/docs/` |
-| 2026-04-16 | - | time_range_info 升级为 Agentic CRAG + 混合检索 | `time_range_info worker graph` 改为 `bootstrap -> hybrid retrieve -> LLM grader -> rewrite loop -> synthesize`；主 graph 本体（`src/task_router_graph/graph.py`）不变，pyskill 负责异步触发与回填；新增 embedding 配置入口并增强静态扫描约束 |
+| 2026-04-16 | - | 数据口径重构：统一手工 holdout 与历史归档 | 后训练评测不再区分 mock/real；手工样本与正式 holdout 由训练模块内部资产目录承接；过时 `cases/environments/rl/mock` 迁移至 `data/archive_legacy/2026-04` |
+| 2026-04-16 | - | 后训练目标改为问题修复导向（真实轨迹优先） | RL 目标转向 formal `environment/task` 语义建模与修复决策；文档与评测规范迁入 `src/task_router_graph_train/docs/` |
+| 2026-04-16 | - | time_range_info 升级为 Agentic CRAG + 混合检索 | `time_range_info worker graph` 改为 `bootstrap -> hybrid retrieve -> LLM grader -> rewrite loop -> synthesize`；主 graph 本体不变，pyskill 负责异步触发与回填；新增 embedding 配置入口并增强静态扫描约束 |
 | 2026-04-16 | - | docs: PySkill 设计稿补充“落地对照 + TODO” | 明确已落地亮点（非阻塞派发、pre-reply 收敛、run_id 幂等）与未落地能力（heartbeat/step 可视化等） |
-| 2026-04-16 | - | 引入 pyskill 模式（skill-mode）与进程巡检回填 | skill_tool 支持非阻塞进程派发；pre-reply 巡检可对死进程/超时自动 failed 收敛；支持重启后 running 任务兜底 |
+| 2026-04-16 | - | 引入 pyskill 模式（skill-mode）与进程巡检回填 | `skill_tool` 支持非阻塞进程派发；pre-reply 巡检可对死进程/超时自动 failed 收敛；支持重启后 running 任务兜底 |
 | 2026-04-16 | - | Skill 体系切换为 ClaudeCode 风格 | 统一 `SKILL.md + scripts + allowed-tools`，新增 `paths.skills_root`，`web_search` 下沉到 `skill_tool` |
 | 2026-04-16 | - | docs 对齐：skill 插件化架构与扩展规范 | 文档与当前实现一致，新增 `docs/skills.md`，降低新增 skill 的认知成本 |
 | 2026-04-15 | `d889c46` | 技能元数据驱动执行 | executor 自动扫描 `SKILL.md`，注入 `name/description/when_to_use/path` 供模型选择 |
@@ -25,20 +35,27 @@
 | 2026-04-15 | `3d5c124` | test agent 增加固定 5 秒 mock sleep | 模拟长任务，验证 running/回填/追问链路 |
 | 2026-04-14 | `d53cae7` | `previous_failed_track` 支持跨 round 定位最近失败任务 | 失败诊断和重试在多轮对话中更稳定 |
 
-## 设计亮点（对应近期改动）
+## 本阶段重点变化
 
-1. 异步与对话解耦：执行耗时与用户交互拆开，体验上更像真实任务系统。
-2. 回填可追踪：source task 与 `pyskill_task` 通过引用关联，既保留原始意图，也保留执行结果实体。
-3. Skill 插件化：executor 通过元数据注入 + 按需 read 正文，支持低侵入扩展。
-4. 路由防抖：controller observe 参数与工具使用边界收紧后，失败更可控、可诊断。
-5. 环境复用一致：交互式 CLI 的状态连续性与落盘结果一致，调试效率更高。
-6. 失败信息可继承：跨 round 的失败轨迹查询降低了“下一轮失忆”问题。
-7. 上下文可控：memory 压缩与视图压缩分层，既控 token 又保留持久化兼容性。
+1. 训练闭环从“分散入口”收口到 manifest 主线。
+2. controller 后训练已经形成 `SFT -> feedback assets -> GRPO -> regression -> failed harvest` 的连续闭环。
+3. teacher 职责正式拆分为三路：`reward_judge / reference_generator / regression_judge`。
+4. badcase 回流开始具备 run-scoped manifest、coverage 面板和下一轮 failed harvest。
+5. 训练、评测、CLI 报告中的路径统一脱敏成 repo-relative 形式。
+6. 根 README 对外定位改成通用工程场景，`functest / accutest / perftest` 明确标为当前内置示例 task family。
+7. 运行入口进一步收紧，当前仅保留 CLI / case 方式，移除了 streamlit 实现与依赖。
 
 ## 建议阅读顺序
 
-1. `docs/design.md`：先看编排、分支语义与 skill 注入链路
-2. `docs/skills.md`：再看 skill 目录规范、元数据注入与扩展步骤
-3. `docs/skills_runtime.md`：再看加载校验、skill_tool 契约与脚本执行细节
-4. `docs/environment.md`：再看落盘结构与异步回填口径
-5. `docs/agent_memory.md`：最后看 memory 与视图压缩机制
+1. `README.md`
+   - 先看运行时框架定位、CLI 入口和 skill / pyskill 主流程
+2. `src/task_router_graph_train/README.md`
+   - 再看训练模块目前真实打通到哪一步
+3. `src/task_router_graph_train/docs/overview.md`
+   - 看训练闭环总图与输入输出约定
+4. `src/task_router_graph_train/docs/data_contract.md`
+   - 看 teacher_source、badcase、manifest、regression records 的正式契约
+5. `src/task_router_graph_train/docs/eval_spec.md`
+   - 看 holdout evaluator、controller regression 和 failed harvest 的关系
+6. `src/task_router_graph_train/docs/training_plan_v1.md`
+   - 最后看 v1 训练边界与未来扩展方向
