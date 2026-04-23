@@ -168,3 +168,51 @@ def test_train_module_cli_smoke(tmp_path: Path) -> None:
     )
     assert badcase_help_proc.returncode == 0, badcase_help_proc.stderr
     assert "--input" in badcase_help_proc.stdout
+
+    feedback_help_cmd = [
+        sys.executable,
+        "-m",
+        "task_router_graph_train.cli.build_feedback_assets",
+        "--help",
+    ]
+    feedback_help_proc = subprocess.run(
+        feedback_help_cmd,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert feedback_help_proc.returncode == 0, feedback_help_proc.stderr
+    assert "--badcase-pool" in feedback_help_proc.stdout
+
+    regression_help_cmd = [
+        sys.executable,
+        "-m",
+        "task_router_graph_train.cli.evaluate_controller_regression",
+        "--help",
+    ]
+    regression_help_proc = subprocess.run(
+        regression_help_cmd,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert regression_help_proc.returncode == 0, regression_help_proc.stderr
+    assert "--predictions" in regression_help_proc.stdout
+
+    harvest_help_cmd = [
+        sys.executable,
+        "-m",
+        "task_router_graph_train.cli.harvest_failed_badcases",
+        "--help",
+    ]
+    harvest_help_proc = subprocess.run(
+        harvest_help_cmd,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert harvest_help_proc.returncode == 0, harvest_help_proc.stderr
+    assert "--evidence" in harvest_help_proc.stdout
