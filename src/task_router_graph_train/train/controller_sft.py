@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ..artifacts import SFT_EXAMPLES_ARTIFACT_TYPE, load_completed_manifest, resolve_named_asset
+from ..artifacts import SFT_EXAMPLES_ARTIFACT_TYPE, load_completed_manifest, resolve_named_asset, to_safe_path
 from ..dataset import read_jsonl
 from ..types import SftExample
 
@@ -267,11 +267,11 @@ def train_controller_sft(
     train_config = {
         "model_name_or_path": model_name_or_path,
         "lora_target_modules": list(lora_target_modules),
-        "train_examples": str(resolved_train_examples),
-        "eval_examples": str(resolved_eval_examples),
-        "input_manifest_path": input_manifest_path,
+        "train_examples": to_safe_path(resolved_train_examples),
+        "eval_examples": to_safe_path(resolved_eval_examples),
+        "input_manifest_path": to_safe_path(input_manifest_path),
         "allow_unsafe_path_input": bool(allow_unsafe_path_input),
-        "output_dir": str(output_dir),
+        "output_dir": to_safe_path(output_dir),
         "num_train_epochs": num_train_epochs,
         "per_device_train_batch_size": per_device_train_batch_size,
         "gradient_accumulation_steps": gradient_accumulation_steps,
@@ -327,7 +327,7 @@ def train_controller_sft(
         "train_config": train_config,
         "train_metrics": train_metrics,
         "eval_metrics": eval_metrics,
-        "output_dir": str(output_dir),
+        "output_dir": to_safe_path(output_dir),
     }
 
 

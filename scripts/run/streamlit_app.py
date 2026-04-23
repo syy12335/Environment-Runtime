@@ -19,7 +19,7 @@ from task_router_graph.llm import resolve_provider_and_model
 from task_router_graph.schema import Environment
 
 from run_common import ensure_preferred_provider_and_log
-from run_common import persist_run_result, serialize_run_result
+from run_common import display_path, persist_run_result, serialize_run_result
 
 
 st.set_page_config(page_title="Task Router Graph", layout="wide")
@@ -239,7 +239,7 @@ with st.sidebar:
         except Exception as exc:
             st.warning(f"配置读取失败: {exc}")
     else:
-        st.warning(f"配置文件不存在: {config_path}")
+        st.warning(f"配置文件不存在: {display_path(config_path)}")
 
 mode = st.radio("Input Mode", ["Case File", "Manual Input"], horizontal=True)
 
@@ -249,12 +249,12 @@ if mode == "Case File":
 
     if run_clicked:
         try:
-            if not config_path.exists():
-                raise FileNotFoundError(f"config 不存在: {config_path}")
+                if not config_path.exists():
+                    raise FileNotFoundError(f"config 不存在: {display_path(config_path)}")
 
-            case_path = _resolve_project_path(case_path_text)
-            if not case_path.exists():
-                raise FileNotFoundError(f"case 不存在: {case_path}")
+                case_path = _resolve_project_path(case_path_text)
+                if not case_path.exists():
+                    raise FileNotFoundError(f"case 不存在: {display_path(case_path)}")
 
             case_payload = json.loads(case_path.read_text(encoding="utf-8"))
             case_id, user_input = _validate_case_payload(case_payload)
@@ -278,8 +278,8 @@ else:
 
     if run_clicked:
         try:
-            if not config_path.exists():
-                raise FileNotFoundError(f"config 不存在: {config_path}")
+                if not config_path.exists():
+                    raise FileNotFoundError(f"config 不存在: {display_path(config_path)}")
 
             case_id = manual_case_id.strip() or "manual"
             user_input = manual_input.strip()

@@ -12,6 +12,7 @@ if str(SRC_ROOT) not in sys.path:
 
 
 from run_common import (
+    display_path,
     ensure_preferred_provider_and_log,
     flush_tracers,
     log,
@@ -104,7 +105,7 @@ def main() -> None:
             config_path = PROJECT_ROOT / config_path
         config_path = config_path.resolve()
         if not config_path.exists():
-            raise FileNotFoundError(f"Config file not found: {config_path}")
+            raise FileNotFoundError(f"Config file not found: {display_path(config_path)}")
 
         ensure_preferred_provider_and_log(config_path)
 
@@ -115,7 +116,7 @@ def main() -> None:
                 "Failed to import TaskRouterGraph. Please install dependencies (pip install -r requirements.txt)."
             ) from exc
 
-        log(f"Loading graph with config: {config_path}")
+        log(f"Loading graph with config: {display_path(config_path)}")
         graph, _ = with_heartbeat(
             "Graph initialization",
             args.heartbeat_sec,

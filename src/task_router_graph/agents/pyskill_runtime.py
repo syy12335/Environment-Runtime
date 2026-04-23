@@ -31,6 +31,16 @@ def _safe_read_text(path: str) -> str:
         return ""
 
 
+def _safe_relpath(path: Path, *, base: Path) -> str:
+    try:
+        return path.resolve().relative_to(base.resolve()).as_posix()
+    except Exception:
+        try:
+            return path.resolve().name
+        except Exception:
+            return str(path)
+
+
 @dataclass
 class PyskillJob:
     run_id: str
@@ -77,6 +87,9 @@ class PyskillRuntimeRegistry:
         log_dir.mkdir(parents=True, exist_ok=True)
         stdout_path = (log_dir / f"{run_id_value}.stdout.log").resolve()
         stderr_path = (log_dir / f"{run_id_value}.stderr.log").resolve()
+        display_base = Path(cwd_value)
+        stdout_path_display = _safe_relpath(stdout_path, base=display_base)
+        stderr_path_display = _safe_relpath(stderr_path, base=display_base)
         payload_text = json.dumps(input_payload, ensure_ascii=False)
         started_at = _now_iso()
 
@@ -131,8 +144,8 @@ class PyskillRuntimeRegistry:
             "skill_name": skill_value,
             "tool_name": tool_value,
             "started_at": started_at,
-            "stdout_log_path": str(stdout_path),
-            "stderr_log_path": str(stderr_path),
+            "stdout_log_path": stdout_path_display,
+            "stderr_log_path": stderr_path_display,
         }
 
     def bind_source(

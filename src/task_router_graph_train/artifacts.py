@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from .runtime_adapter import REPO_ROOT
 
 DEFAULT_FEEDBACK_MANIFEST_NAME = "feedback_manifest.json"
 FEEDBACK_RUN_ARTIFACT_TYPE = "feedback_run_v1"
@@ -29,6 +32,21 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def to_safe_path(path: Path | str, *, base: Path | None = None) -> str:
+    value = str(path).strip()
+    if not value:
+        return ""
+    target = Path(value)
+    if not target.is_absolute():
+        return target.as_posix()
+    anchor = (base or REPO_ROOT).resolve()
+    resolved = target.resolve()
+    try:
+        return resolved.relative_to(anchor).as_posix()
+    except Exception:
+        return Path(os.path.relpath(str(resolved), str(anchor))).as_posix()
+
+
 def load_json(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -45,7 +63,7 @@ def resolve_manifest_path(
     if asset_manifest is not None:
         path = Path(asset_manifest).resolve()
         if not path.exists():
-            raise FileNotFoundError(f"asset manifest not found: {path}")
+            raise FileNotFoundError(f"asset manifest not found: {to_safe_path(path)}")
         return path
     if run_dir is None:
         raise ValueError("asset_manifest or run_dir is required")
@@ -57,7 +75,7 @@ def resolve_manifest_path(
     for path in candidates:
         if path.exists():
             return path
-    raise FileNotFoundError(f"no manifest found under run_dir: {resolved_run_dir}")
+    raise FileNotFoundError(f"no manifest found under run_dir: {to_safe_path(resolved_run_dir)}")
 
 
 def load_completed_manifest(
@@ -112,8 +130,8 @@ def init_feedback_manifest(
         "status": "running",
         "created_at": utc_now_iso(),
         "updated_at": utc_now_iso(),
-        "source_badcase_path": str(source_badcase_path.resolve()),
-        "config_path": str(config_path.resolve()) if config_path is not None else "",
+        "source_badcase_path": to_safe_path(source_badcase_path),
+        "config_path": to_safe_path(config_path) if config_path is not None else "",
         "config_snapshot": copy.deepcopy(config_snapshot or {}),
         "stats": {
             "input_badcase_count": 0,

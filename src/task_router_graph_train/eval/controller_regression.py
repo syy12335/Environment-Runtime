@@ -12,6 +12,7 @@ from ..artifacts import (
     CONTROLLER_REGRESSION_RECORDS_ARTIFACT_TYPE,
     load_completed_manifest,
     resolve_named_asset,
+    to_safe_path,
 )
 from ..runtime_adapter import CONFIGS_ROOT
 from ..train.controller_grpo_teacher import (
@@ -82,9 +83,9 @@ def evaluate_controller_regression(
         "run_manifest": {
             "record_count": len(records),
             "prediction_count": len(predictions_by_id),
-            "record_path": str(resolved_record_path),
-            "prediction_path": str(Path(prediction_path).resolve()),
-            "asset_manifest": str(manifest.get("_manifest_path", "")) if isinstance(manifest, dict) else "",
+            "record_path": to_safe_path(resolved_record_path),
+            "prediction_path": to_safe_path(Path(prediction_path).resolve()),
+            "asset_manifest": to_safe_path(manifest.get("_manifest_path", "")) if isinstance(manifest, dict) else "",
         },
         "evidence_rows": evidence_rows,
     }

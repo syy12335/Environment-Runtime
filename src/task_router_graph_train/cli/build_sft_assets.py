@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+from ..artifacts import to_safe_path
 from ..dataset import (
     DEFAULT_SFT_OUTPUT_ROOT,
     DEFAULT_SFT_TEACHER_SOURCE_DIR,
@@ -52,11 +53,11 @@ def main() -> None:
         json.dumps(
             {
                 "record_count": len(records),
-                "manifest_path": str(output_paths["manifest_path"]),
-                "train_records": str(output_paths["record_train_path"]),
-                "eval_records": str(output_paths["record_eval_path"]),
-                "train_examples": str(output_paths["example_train_path"]),
-                "eval_examples": str(output_paths["example_eval_path"]),
+                "manifest_path": to_safe_path(output_paths["manifest_path"]),
+                "train_records": to_safe_path(output_paths["record_train_path"]),
+                "eval_records": to_safe_path(output_paths["record_eval_path"]),
+                "train_examples": to_safe_path(output_paths["example_train_path"]),
+                "eval_examples": to_safe_path(output_paths["example_eval_path"]),
             },
             ensure_ascii=False,
             indent=2,

@@ -20,6 +20,7 @@ from .artifacts import (
     init_feedback_manifest,
     refresh_manifest,
     resolve_named_asset,
+    to_safe_path,
     write_json,
 )
 from .dataset import render_controller_prompt, render_controller_target_text, sanitize_environment_payload, write_jsonl
@@ -275,21 +276,21 @@ def build_feedback_assets(
         manifest["assets"] = {
             "badcase_pool_v1": {
                 "artifact_type": "badcase_pool_v1",
-                "path": str(normalized_badcase_path),
+                "path": to_safe_path(normalized_badcase_path),
             },
             "sft_examples_v1": {
                 "artifact_type": SFT_EXAMPLES_ARTIFACT_TYPE,
-                "train_path": str(sft_train_path),
-                "eval_path": str(sft_eval_path),
+                "train_path": to_safe_path(sft_train_path),
+                "eval_path": to_safe_path(sft_eval_path),
             },
             "controller_training_records_v1": {
                 "artifact_type": CONTROLLER_TRAINING_RECORDS_ARTIFACT_TYPE,
-                "train_path": str(controller_train_path),
-                "eval_path": str(controller_eval_path),
+                "train_path": to_safe_path(controller_train_path),
+                "eval_path": to_safe_path(controller_eval_path),
             },
             "controller_regression_records_v1": {
                 "artifact_type": CONTROLLER_REGRESSION_RECORDS_ARTIFACT_TYPE,
-                "path": str(regression_path),
+                "path": to_safe_path(regression_path),
             },
         }
         manifest = refresh_manifest(manifest, status="completed")
@@ -299,14 +300,14 @@ def build_feedback_assets(
             latest_success_path,
             {
                 "run_id": resolved_run_id,
-                "manifest_path": str(manifest_path),
+                "manifest_path": to_safe_path(manifest_path),
                 "updated_at": manifest["updated_at"],
             },
         )
         return {
             "run_id": resolved_run_id,
-            "run_dir": str(run_dir),
-            "manifest_path": str(manifest_path),
+            "run_dir": to_safe_path(run_dir),
+            "manifest_path": to_safe_path(manifest_path),
             "manifest": manifest,
         }
     except Exception as exc:
@@ -402,7 +403,7 @@ def harvest_failed_badcases(
     resolved_output_path.parent.mkdir(parents=True, exist_ok=True)
     write_jsonl(resolved_output_path, harvested)
     return {
-        "output_path": str(resolved_output_path),
+        "output_path": to_safe_path(resolved_output_path),
         "record_count": len(harvested),
         "artifact_type": FAILED_BADCASE_ROWS_ARTIFACT_TYPE,
     }

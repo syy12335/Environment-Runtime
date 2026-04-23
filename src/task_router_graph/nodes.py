@@ -66,7 +66,7 @@ def _resolve_observe_path(*, workspace_root: Path, raw_path: str) -> Path:
     try:
         target.relative_to(workspace)
     except ValueError as exc:
-        raise ValueError(f"observe path escapes workspace root: {target}") from exc
+        raise ValueError("observe path escapes workspace root") from exc
 
     return target
 
@@ -116,7 +116,7 @@ def _tool_read(*, workspace_root: Path, path: str = "") -> str:
         return f"ERROR: read failed to resolve path={path!r}: {exc}"
 
     if not target.exists():
-        return f"ERROR: read path not found: {target}"
+        return f"ERROR: read path not found: {raw_path}"
 
     if target.is_dir():
         entries = sorted(item.name for item in target.iterdir())
@@ -148,7 +148,7 @@ def _tool_ls(*, workspace_root: Path, path: str = "") -> str:
         return f"ERROR: ls failed to resolve path={path!r}: {exc}"
 
     if not target.exists():
-        return f"ERROR: ls path not found: {target}"
+        return f"ERROR: ls path not found: {raw_path}"
 
     if not target.is_dir():
         return f"ERROR: ls expects a directory path, got file: {target}"
@@ -257,12 +257,13 @@ class SkillToolRuntime:
             )
 
         scripts_abs = active_skill.get("scripts_abs", {})
-        script_path = str(scripts_abs.get(tool_name, "")).strip()
-        if not script_path:
+        script_path_abs = str(scripts_abs.get(tool_name, "")).strip()
+        if not script_path_abs:
             return ERR_SKILL_TOOL_SCRIPT_NOT_CONFIGURED_TEMPLATE.format(
                 tool_name=tool_name,
                 skill_name=active_skill.get("name", "<unknown>"),
             )
+        script_path = str(active_skill.get("scripts", {}).get(tool_name, "")).strip() or f"scripts/{tool_name}"
 
         skill_mode = str(active_skill.get("skill_mode", "sync")).strip().lower() or "sync"
         if skill_mode == "pyskill":
@@ -289,7 +290,7 @@ class SkillToolRuntime:
                 "pyskill_dispatch": dispatch_payload,
             }
 
-        command = ["bash", script_path] if script_path.endswith(".sh") else [sys.executable, script_path]
+        command = ["bash", script_path_abs] if script_path_abs.endswith(".sh") else [sys.executable, script_path_abs]
         input_text = json.dumps(input_payload, ensure_ascii=False)
         cwd = str(active_skill.get("skill_dir_abs", self.workspace_root))
 

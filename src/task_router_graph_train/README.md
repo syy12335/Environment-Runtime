@@ -76,21 +76,21 @@
 构建模块内资产：
 
 ```bash
-cd /root/WORK/task-rounting
+cd <repo-root>
 PYTHONPATH=src python3 -m task_router_graph_train.cli.build_assets
 ```
 
 构建 controller SFT teacher records 和 examples：
 
 ```bash
-cd /root/WORK/task-rounting
+cd <repo-root>
 PYTHONPATH=src python3 -m task_router_graph_train.cli.build_sft_assets
 ```
 
 运行最小 controller SFT warm start：
 
 ```bash
-cd /root/WORK/task-rounting
+cd <repo-root>
 PYTHONPATH=src python3 -m task_router_graph_train.cli.train_sft \
   --model-name-or-path <your-model> \
   --lora-target-modules q_proj v_proj
@@ -101,7 +101,7 @@ PYTHONPATH=src python3 -m task_router_graph_train.cli.train_sft \
 跑离线评测：
 
 ```bash
-cd /root/WORK/task-rounting
+cd <repo-root>
 PYTHONPATH=src python3 -m task_router_graph_train.cli.evaluate \
   --predictions src/task_router_graph_train/assets/rl_v1/holdout/k20_manual_records.jsonl
 ```
@@ -111,7 +111,7 @@ PYTHONPATH=src python3 -m task_router_graph_train.cli.evaluate \
 运行 controller Teacher-RM GRPO（单步，verl backend）：
 
 ```bash
-cd /root/WORK/task-rounting
+cd <repo-root>
 PYTHONPATH=src python3 -m task_router_graph_train.cli.train_grpo \
   --output-dir var/runs/task_router_graph_train/grpo/latest \
   --teacher-mode oracle \
@@ -138,7 +138,7 @@ PYTHONPATH=src python3 -m task_router_graph_train.cli.train_grpo \
 线上 bad case 回流样本标准化：
 
 ```bash
-cd /root/WORK/task-rounting
+cd <repo-root>
 PYTHONPATH=src python3 -m task_router_graph_train.cli.ingest_badcases \
   --input var/runs/production_badcases.jsonl \
   --output src/task_router_graph_train/assets/rl_v1/badcase_pool/production_sampled.jsonl

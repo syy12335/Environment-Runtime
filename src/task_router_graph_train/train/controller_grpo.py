@@ -17,6 +17,7 @@ from ..artifacts import (
     VERL_RL_DATASET_ARTIFACT_TYPE,
     load_completed_manifest,
     resolve_named_asset,
+    to_safe_path,
 )
 from ..dataset import build_controller_train_records, render_controller_prompt, render_controller_target_text, write_jsonl
 from ..dataset.io import read_jsonl
@@ -271,6 +272,7 @@ def train_controller_grpo(
         repo_root=repo_root,
     )
     manifest = copy.deepcopy(input_resolution["record_manifest"])
+    manifest_for_report = _sanitize_manifest_paths_for_report(manifest)
     controller_records = list(input_resolution["controller_records"])
 
     if input_resolution["dataset_mode"] == VERL_RL_DATASET_ARTIFACT_TYPE:
@@ -326,7 +328,7 @@ def train_controller_grpo(
         )
         preview_path = output_dir / "grpo_rollout_groups.debug.jsonl"
         write_jsonl(preview_path, preview_groups)
-        audit_paths["rollout_preview_path"] = str(preview_path)
+        audit_paths["rollout_preview_path"] = to_safe_path(preview_path)
 
     overrides = _build_verl_overrides(
         config=effective_config,
@@ -336,17 +338,18 @@ def train_controller_grpo(
     )
     overrides_path = output_dir / "verl_hydra_overrides.json"
     overrides_path.write_text(json.dumps(overrides, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    overrides_for_report = _sanitize_hydra_overrides_for_report(overrides)
 
     request_payload = {
         "trainer_backend": "verl",
         "execution_mode": "export_only" if export_only or run_verl_update is False else "direct_update",
-        "runtime_config_path": str(runtime_config_path),
-        "train_dataset_path": str(dataset_paths["train_path"]),
-        "eval_dataset_path": str(dataset_paths["eval_path"]),
+        "runtime_config_path": to_safe_path(runtime_config_path),
+        "train_dataset_path": to_safe_path(dataset_paths["train_path"]),
+        "eval_dataset_path": to_safe_path(dataset_paths["eval_path"]),
         "rollout_backend": str(effective_config["rollout"]["backend"]),
         "teacher_backend": str(teacher_config["mode"]),
         "update_backend": str(effective_config["update"]["backend"]),
-        "hydra_overrides": list(overrides),
+        "hydra_overrides": list(overrides_for_report),
     }
     request_path = output_dir / "verl_training_request.json"
     request_path.write_text(json.dumps(request_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -355,31 +358,32 @@ def train_controller_grpo(
     training_report: dict[str, Any] = {
         "trainer_backend": "verl",
         "execution_mode": "direct_update" if should_run_update else "export_only",
-        "output_dir": str(output_dir),
-        "config_path": str((config_path or DEFAULT_GRPO_CONFIG_PATH).resolve()),
-        "runtime_config_path": str(runtime_config_path),
+        "output_dir": to_safe_path(output_dir),
+        "config_path": to_safe_path((config_path or DEFAULT_GRPO_CONFIG_PATH).resolve()),
+        "runtime_config_path": to_safe_path(runtime_config_path),
         "rollout_backend": str(effective_config["rollout"]["backend"]),
         "teacher_backend": str(teacher_config["mode"]),
         "teacher_mode": str(teacher_config["mode"]),
         "teacher_model": str(teacher_config.get("model", "")),
         "teacher_config": sanitize_teacher_config_for_report(teacher_config),
         "update_backend": str(effective_config["update"]["backend"]),
-        "train_dataset_path": str(dataset_paths["train_path"]),
-        "eval_dataset_path": str(dataset_paths["eval_path"]),
-        "verl_training_request_path": str(request_path),
-        "verl_hydra_overrides_path": str(overrides_path),
+        "train_dataset_path": to_safe_path(dataset_paths["train_path"]),
+        "eval_dataset_path": to_safe_path(dataset_paths["eval_path"]),
+        "verl_training_request_path": to_safe_path(request_path),
+        "verl_hydra_overrides_path": to_safe_path(overrides_path),
         "group_count": len(controller_records)
         if controller_records
         else int(dataset_paths["counts_by_split"]["train"]) + int(dataset_paths["counts_by_split"]["eval"]),
         "counts_by_split": dict(dataset_paths["counts_by_split"]),
-        "record_manifest": manifest,
+        "record_manifest": manifest_for_report,
         "input_artifact_type": str(input_resolution["dataset_mode"]),
-        "input_manifest_path": str(input_resolution.get("input_manifest_path", "")),
+        "input_manifest_path": to_safe_path(input_resolution.get("input_manifest_path", "")),
         "unsafe_path_input": bool(input_resolution.get("unsafe_path_input", False)),
         "num_candidates": int(effective_config["rollout"]["num_candidates"]),
         "seed": int(effective_config.get("seed", seed)),
         "compatibility_warnings": compatibility_warnings,
         "audit_paths": audit_paths,
+        "hydra_overrides": list(overrides_for_report),
     }
 
     if should_run_update:
@@ -409,7 +413,7 @@ def train_controller_grpo(
         }
 
     report_path = output_dir / "grpo_train_report.json"
-    training_report["report_path"] = str(report_path)
+    training_report["report_path"] = to_safe_path(report_path)
     report_path.write_text(json.dumps(training_report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return training_report
 
@@ -839,6 +843,54 @@ def _format_hydra_value(value: Any) -> str:
     return json.dumps(str(value), ensure_ascii=False)
 
 
+def _sanitize_hydra_overrides_for_report(overrides: list[str]) -> list[str]:
+    path_keys = {
+        "data.train_files",
+        "data.val_files",
+        "actor_rollout_ref.model.path",
+        "reward.reward_manager.module.path",
+    }
+    sanitized: list[str] = []
+    for item in overrides:
+        text = str(item)
+        if "=" not in text:
+            sanitized.append(text)
+            continue
+        key, raw_value = text.split("=", 1)
+        if key not in path_keys:
+            sanitized.append(text)
+            continue
+        try:
+            parsed = json.loads(raw_value)
+        except Exception:
+            sanitized.append(f"{key}={json.dumps(to_safe_path(raw_value), ensure_ascii=False)}")
+            continue
+        if isinstance(parsed, str):
+            sanitized.append(f"{key}={json.dumps(to_safe_path(parsed), ensure_ascii=False)}")
+            continue
+        if isinstance(parsed, list):
+            payload = [to_safe_path(value) if isinstance(value, str) else value for value in parsed]
+            sanitized.append(f"{key}={json.dumps(payload, ensure_ascii=False)}")
+            continue
+        sanitized.append(text)
+    return sanitized
+
+
+def _sanitize_manifest_paths_for_report(payload: Any) -> Any:
+    if isinstance(payload, dict):
+        output: dict[str, Any] = {}
+        for key, value in payload.items():
+            normalized_key = str(key).strip().lower()
+            if normalized_key in {"path", "train_path", "eval_path", "source_badcase_path", "config_path", "manifest_path"}:
+                output[key] = to_safe_path(value)
+            else:
+                output[key] = _sanitize_manifest_paths_for_report(value)
+        return output
+    if isinstance(payload, list):
+        return [_sanitize_manifest_paths_for_report(item) for item in payload]
+    return payload
+
+
 def _run_verl_training(
     *,
     output_dir: Path,
@@ -872,15 +924,15 @@ def _run_verl_training(
     if proc.returncode != 0:
         raise RuntimeError(
             "verl direct update failed with exit code "
-            f"{proc.returncode}. Check logs: {stdout_log} and {stderr_log}"
+            f"{proc.returncode}. Check logs: {to_safe_path(stdout_log)} and {to_safe_path(stderr_log)}"
         )
 
     return {
         "status": "completed",
         "command": command,
         "returncode": proc.returncode,
-        "stdout_log": str(stdout_log),
-        "stderr_log": str(stderr_log),
+        "stdout_log": to_safe_path(stdout_log),
+        "stderr_log": to_safe_path(stderr_log),
     }
 
 
@@ -909,9 +961,9 @@ def _run_holdout_monitoring(
         )
         return {
             "enabled": True,
-            "record_path": str(holdout_records),
-            "prediction_path": str(holdout_predictions),
-            "output_dir": str(monitor_dir),
+            "record_path": to_safe_path(holdout_records),
+            "prediction_path": to_safe_path(holdout_predictions),
+            "output_dir": to_safe_path(monitor_dir),
         }
     except Exception as exc:  # pragma: no cover - best effort monitoring
         return {

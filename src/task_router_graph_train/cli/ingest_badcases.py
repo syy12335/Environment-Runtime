@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ..artifacts import to_safe_path
+
 from ..dataset import sanitize_environment_payload
 
 
@@ -60,8 +62,8 @@ def main() -> None:
     print(
         json.dumps(
             {
-                "input_path": str(input_path),
-                "output_path": str(output_path),
+                "input_path": to_safe_path(input_path),
+                "output_path": to_safe_path(output_path),
                 "record_count": len(rows),
                 "source": str(args.source),
             },

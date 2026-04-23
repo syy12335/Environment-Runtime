@@ -34,6 +34,15 @@ def log(message: str) -> None:
     print(f"[{ts}] {message}", flush=True)
 
 
+def display_path(path: Path | str, *, project_root: Path = PROJECT_ROOT) -> str:
+    target = Path(str(path)).resolve()
+    root = project_root.resolve()
+    try:
+        return target.relative_to(root).as_posix()
+    except Exception:
+        return os.path.relpath(str(target), str(root))
+
+
 def resolve_run_dir(*, project_root: Path, run_id: str) -> Path:
     normalized = str(run_id).strip()
     if not normalized:
