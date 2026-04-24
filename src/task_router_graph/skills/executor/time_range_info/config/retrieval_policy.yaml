@@ -1,5 +1,5 @@
 runtime:
-  max_iterations: 3
+  max_iterations: 6
   allow_rewrite: true
   rewrite_temperature: 0.2
   max_docs_in_context: 8
