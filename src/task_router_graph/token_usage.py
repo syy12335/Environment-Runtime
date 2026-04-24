@@ -38,6 +38,86 @@ def empty_token_usage_summary() -> dict[str, Any]:
     }
 
 
+def _coerce_usage_summary(payload: Any) -> dict[str, Any]:
+    data = _as_mapping(payload)
+    if data is None:
+        return empty_token_usage_summary()
+
+    out = empty_token_usage_summary()
+    out["input_tokens"] = int(_safe_int(data.get("input_tokens")) or 0)
+    out["output_tokens"] = int(_safe_int(data.get("output_tokens")) or 0)
+    out["total_tokens"] = int(_safe_int(data.get("total_tokens")) or 0)
+    out["call_count"] = int(_safe_int(data.get("call_count")) or 0)
+    out["calls_with_usage"] = int(_safe_int(data.get("calls_with_usage")) or 0)
+    out["calls_without_usage"] = int(_safe_int(data.get("calls_without_usage")) or 0)
+
+    by_bucket = _as_mapping(data.get("by_bucket"))
+    if by_bucket is None:
+        return out
+
+    out_by_bucket = out.get("by_bucket", {})
+    if not isinstance(out_by_bucket, dict):
+        out_by_bucket = {}
+        out["by_bucket"] = out_by_bucket
+
+    for bucket in TOKEN_USAGE_BUCKETS:
+        raw_bucket = _as_mapping(by_bucket.get(bucket))
+        if raw_bucket is None:
+            continue
+        out_by_bucket[bucket] = {
+            "input_tokens": int(_safe_int(raw_bucket.get("input_tokens")) or 0),
+            "output_tokens": int(_safe_int(raw_bucket.get("output_tokens")) or 0),
+            "total_tokens": int(_safe_int(raw_bucket.get("total_tokens")) or 0),
+            "call_count": int(_safe_int(raw_bucket.get("call_count")) or 0),
+            "calls_with_usage": int(_safe_int(raw_bucket.get("calls_with_usage")) or 0),
+            "calls_without_usage": int(_safe_int(raw_bucket.get("calls_without_usage")) or 0),
+            "is_complete": int(_safe_int(raw_bucket.get("calls_without_usage")) or 0) == 0,
+        }
+    return out
+
+
+def merge_token_usage_summary(base: Any, delta: Any) -> dict[str, Any]:
+    left = _coerce_usage_summary(base)
+    right = _coerce_usage_summary(delta)
+    merged = empty_token_usage_summary()
+
+    for field in (
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "call_count",
+        "calls_with_usage",
+        "calls_without_usage",
+    ):
+        merged[field] = int(left.get(field, 0) or 0) + int(right.get(field, 0) or 0)
+    merged["is_complete"] = int(merged.get("calls_without_usage", 0) or 0) == 0
+
+    merged_by_bucket = merged.get("by_bucket", {})
+    left_by_bucket = left.get("by_bucket", {})
+    right_by_bucket = right.get("by_bucket", {})
+    if not isinstance(merged_by_bucket, dict):
+        merged_by_bucket = {}
+        merged["by_bucket"] = merged_by_bucket
+
+    for bucket in TOKEN_USAGE_BUCKETS:
+        left_bucket = _as_mapping(left_by_bucket.get(bucket)) if isinstance(left_by_bucket, dict) else None
+        right_bucket = _as_mapping(right_by_bucket.get(bucket)) if isinstance(right_by_bucket, dict) else None
+        bucket_summary = {}
+        for field in (
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "call_count",
+            "calls_with_usage",
+            "calls_without_usage",
+        ):
+            bucket_summary[field] = int((left_bucket or {}).get(field, 0) or 0) + int((right_bucket or {}).get(field, 0) or 0)
+        bucket_summary["is_complete"] = int(bucket_summary.get("calls_without_usage", 0) or 0) == 0
+        merged_by_bucket[bucket] = bucket_summary
+
+    return merged
+
+
 def _safe_int(value: Any) -> int | None:
     if value is None or value == "":
         return None

@@ -4,13 +4,18 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from task_router_graph.token_usage import TOKEN_USAGE_BUCKETS
+from task_router_graph.token_usage import (
+    TOKEN_USAGE_BUCKETS,
+    empty_token_usage_summary,
+    merge_token_usage_summary,
+)
 from run_common import (
     display_path,
     ensure_preferred_provider_and_log,
@@ -48,16 +53,21 @@ def _print_result(result: dict, *, show_environment: bool, show_raw: bool) -> No
         print_cli_line(json.dumps(environment, ensure_ascii=False, indent=2))
 
 
-def _build_token_usage_text(result: dict) -> str:
+def _build_token_usage_text(
+    result: dict,
+    *,
+    key: str = "token_usage",
+    title: str = "=== Token Usage ===",
+) -> str:
     if not isinstance(result, dict):
         return "[token_usage] invalid result payload"
 
-    token_usage = result.get("token_usage")
+    token_usage = result.get(key)
     if not isinstance(token_usage, dict):
-        return "[token_usage] missing token_usage payload"
+        return f"[token_usage] missing {key} payload"
 
     lines = [
-        "=== Token Usage ===",
+        title,
         f"total_tokens: {int(token_usage.get('total_tokens', 0) or 0)}",
         f"input_tokens: {int(token_usage.get('input_tokens', 0) or 0)}",
         f"output_tokens: {int(token_usage.get('output_tokens', 0) or 0)}",
@@ -91,8 +101,29 @@ def _build_token_usage_text(result: dict) -> str:
     return "\n".join(lines)
 
 
-def _print_token_usage(result: dict) -> None:
-    print_cli_line(_build_token_usage_text(result))
+def _print_token_usage(
+    result: dict,
+    *,
+    key: str = "token_usage",
+    title: str = "=== Token Usage ===",
+) -> None:
+    print_cli_line(_build_token_usage_text(result, key=key, title=title))
+
+
+def _build_token_usage_brief_text(*, turn_usage: dict[str, Any], session_usage: dict[str, Any]) -> str:
+    turn_total = int(turn_usage.get("total_tokens", 0) or 0)
+    session_total = int(session_usage.get("total_tokens", 0) or 0)
+    turn_complete = bool(turn_usage.get("is_complete", False))
+    session_complete = bool(session_usage.get("is_complete", False))
+    return (
+        "TokenUsage(turn/session): "
+        f"total={turn_total}/{session_total}, "
+        f"complete={str(turn_complete).lower()}/{str(session_complete).lower()}"
+    )
+
+
+def _print_token_usage_brief(*, turn_usage: dict[str, Any], session_usage: dict[str, Any]) -> None:
+    print_cli_line(_build_token_usage_brief_text(turn_usage=turn_usage, session_usage=session_usage))
 
 
 def _build_environment_show_text(result: dict) -> str:
@@ -173,6 +204,8 @@ def main() -> None:
             print_cli_line("Interactive mode started. Type /exit to quit.")
             turn = 1
             interactive_environment = None
+            session_token_usage = empty_token_usage_summary()
+            last_turn_payload: dict[str, Any] | None = None
             while True:
                 try:
                     user_input = input("\nYou> ").strip()
@@ -200,17 +233,41 @@ def main() -> None:
                     ),
                 )
                 interactive_environment = result.environment
-                persist_run_result(result, project_root=PROJECT_ROOT)
-                payload = serialize_run_result(result, project_root=PROJECT_ROOT)
+                turn_token_usage = getattr(result, "token_usage", {})
+                if not isinstance(turn_token_usage, dict):
+                    turn_token_usage = empty_token_usage_summary()
+                session_token_usage = merge_token_usage_summary(session_token_usage, turn_token_usage)
+                persist_run_result(
+                    result,
+                    project_root=PROJECT_ROOT,
+                    token_usage_session=session_token_usage,
+                )
+                payload = serialize_run_result(
+                    result,
+                    project_root=PROJECT_ROOT,
+                    token_usage_session=session_token_usage,
+                )
+                last_turn_payload = payload
 
                 output = payload.get("output", {}) if isinstance(payload, dict) else {}
                 reply = str(output.get("reply", "")).strip()
                 print_cli_line(f"Assistant> {reply}")
                 _print_result(payload, show_environment=args.show_environment, show_raw=args.raw)
                 if not args.raw:
-                    _print_token_usage(payload)
+                    _print_token_usage_brief(turn_usage=turn_token_usage, session_usage=session_token_usage)
                 _print_show_track(payload)
                 turn += 1
+            if (not args.raw) and isinstance(last_turn_payload, dict):
+                _print_token_usage(
+                    last_turn_payload,
+                    key="token_usage",
+                    title="=== Token Usage Final (Last Turn) ===",
+                )
+                _print_token_usage(
+                    last_turn_payload,
+                    key="token_usage_session",
+                    title="=== Token Usage Final (Session) ===",
+                )
             return
 
         user_input = _resolve_input(args)

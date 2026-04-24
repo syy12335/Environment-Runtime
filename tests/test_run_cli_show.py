@@ -42,6 +42,16 @@ def _build_payload() -> dict[str, object]:
         },
         "environment": {"case_id": "case_demo", "rounds": [], "cur_round": 0, "updated_at": "", "history_summaries": [], "history_meta_summary": ""},
         "token_usage": token_usage,
+        "token_usage_session": {
+            **empty_token_usage_summary(),
+            "input_tokens": 40,
+            "output_tokens": 10,
+            "total_tokens": 50,
+            "call_count": 8,
+            "calls_with_usage": 6,
+            "calls_without_usage": 2,
+            "is_complete": False,
+        },
     }
 
 
@@ -70,3 +80,31 @@ def test_print_result_raw_keeps_top_level_token_usage(monkeypatch) -> None:
     rendered = "\n".join(lines)
     assert '"token_usage"' in rendered
     assert '"total_tokens": 25' in rendered
+
+
+def test_token_usage_brief_contains_turn_and_session_values() -> None:
+    payload = _build_payload()
+    turn_usage = payload["token_usage"]
+    session_usage = payload["token_usage_session"]
+    assert isinstance(turn_usage, dict)
+    assert isinstance(session_usage, dict)
+
+    text = run_cli_show._build_token_usage_brief_text(turn_usage=turn_usage, session_usage=session_usage)
+    assert "TokenUsage(turn/session):" in text
+    assert "total=25/50" in text
+    assert "complete=false/false" in text
+
+
+def test_print_token_usage_supports_session_key(monkeypatch) -> None:
+    payload = _build_payload()
+    lines: list[str] = []
+    monkeypatch.setattr(run_cli_show, "print_cli_line", lambda message="": lines.append(message))
+
+    run_cli_show._print_token_usage(
+        payload,
+        key="token_usage_session",
+        title="=== Token Usage Final (Session) ===",
+    )
+    rendered = "\n".join(lines)
+    assert "=== Token Usage Final (Session) ===" in rendered
+    assert "total_tokens: 50" in rendered

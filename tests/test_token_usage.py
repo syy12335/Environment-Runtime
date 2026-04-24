@@ -14,7 +14,12 @@ if str(SRC_ROOT) not in sys.path:
 
 
 from task_router_graph.schema import Environment, Task
-from task_router_graph.token_usage import TokenUsageRecorder, extract_token_usage, invoke_with_usage
+from task_router_graph.token_usage import (
+    TokenUsageRecorder,
+    extract_token_usage,
+    invoke_with_usage,
+    merge_token_usage_summary,
+)
 
 
 def test_extract_token_usage_prefers_usage_metadata() -> None:
@@ -120,3 +125,73 @@ def test_token_usage_recorder_tracks_missing_usage_without_estimating() -> None:
     assert summary["calls_without_usage"] == 1
     assert summary["total_tokens"] == 0
     assert summary["is_complete"] is False
+
+
+def test_merge_token_usage_summary_accumulates_top_level_and_buckets() -> None:
+    left = {
+        "input_tokens": 10,
+        "output_tokens": 3,
+        "total_tokens": 13,
+        "call_count": 2,
+        "calls_with_usage": 2,
+        "calls_without_usage": 0,
+        "by_bucket": {
+            "controller": {
+                "input_tokens": 10,
+                "output_tokens": 3,
+                "total_tokens": 13,
+                "call_count": 2,
+                "calls_with_usage": 2,
+                "calls_without_usage": 0,
+            }
+        },
+    }
+    right = {
+        "input_tokens": 8,
+        "output_tokens": 2,
+        "total_tokens": 10,
+        "call_count": 3,
+        "calls_with_usage": 2,
+        "calls_without_usage": 1,
+        "by_bucket": {
+            "reply": {
+                "input_tokens": 8,
+                "output_tokens": 2,
+                "total_tokens": 10,
+                "call_count": 3,
+                "calls_with_usage": 2,
+                "calls_without_usage": 1,
+            }
+        },
+    }
+
+    merged = merge_token_usage_summary(left, right)
+
+    assert merged["input_tokens"] == 18
+    assert merged["output_tokens"] == 5
+    assert merged["total_tokens"] == 23
+    assert merged["call_count"] == 5
+    assert merged["calls_with_usage"] == 4
+    assert merged["calls_without_usage"] == 1
+    assert merged["is_complete"] is False
+    assert merged["by_bucket"]["controller"]["total_tokens"] == 13
+    assert merged["by_bucket"]["reply"]["total_tokens"] == 10
+    assert merged["by_bucket"]["reply"]["is_complete"] is False
+
+
+def test_merge_token_usage_summary_tolerates_missing_or_invalid_payload() -> None:
+    merged = merge_token_usage_summary(
+        {
+            "total_tokens": 5,
+            "calls_without_usage": 0,
+            "by_bucket": {"controller": {"total_tokens": 5, "calls_without_usage": 0}},
+        },
+        {"by_bucket": {"controller": {"total_tokens": "bad", "calls_without_usage": 2}}},
+    )
+
+    assert merged["total_tokens"] == 5
+    assert merged["calls_without_usage"] == 0
+    assert merged["is_complete"] is True
+    assert merged["by_bucket"]["controller"]["total_tokens"] == 5
+    assert merged["by_bucket"]["controller"]["calls_without_usage"] == 2
+    assert merged["by_bucket"]["controller"]["is_complete"] is False

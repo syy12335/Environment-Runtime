@@ -81,3 +81,29 @@ def test_persist_run_result_writes_result_json_without_changing_environment_sche
     assert result_json["case_id"] == "case_demo"
     assert result_json["output"]["run_dir"] == "var/runs/run_20260424_010203"
     assert result_json["token_usage"]["total_tokens"] == 42
+
+
+def test_serialize_and_persist_include_token_usage_session_when_provided(tmp_path: Path) -> None:
+    project_root = tmp_path
+    result = _build_result()
+    token_usage_session = empty_token_usage_summary()
+    token_usage_session["total_tokens"] = 100
+    token_usage_session["input_tokens"] = 80
+    token_usage_session["output_tokens"] = 20
+
+    payload = run_common.serialize_run_result(
+        result,
+        project_root=project_root,
+        token_usage_session=token_usage_session,
+    )
+    assert payload["token_usage"]["total_tokens"] == 42
+    assert payload["token_usage_session"]["total_tokens"] == 100
+
+    run_dir, _ = run_common.persist_run_result(
+        result,
+        project_root=project_root,
+        token_usage_session=token_usage_session,
+    )
+    result_json = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
+    assert result_json["token_usage"]["total_tokens"] == 42
+    assert result_json["token_usage_session"]["total_tokens"] == 100

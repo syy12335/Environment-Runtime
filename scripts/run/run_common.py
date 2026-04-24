@@ -97,7 +97,12 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
             fp.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def persist_run_result(result: Any, *, project_root: Path) -> tuple[Path, dict[str, Any]]:
+def persist_run_result(
+    result: Any,
+    *,
+    project_root: Path,
+    token_usage_session: dict[str, Any] | None = None,
+) -> tuple[Path, dict[str, Any]]:
     from task_router_graph.token_usage import empty_token_usage_summary
     from task_router_graph.utils import write_json
 
@@ -122,14 +127,17 @@ def persist_run_result(result: Any, *, project_root: Path) -> tuple[Path, dict[s
     token_usage = getattr(result, "token_usage", {})
     if not isinstance(token_usage, dict):
         token_usage = empty_token_usage_summary()
+    result_payload = {
+        "run_id": run_id,
+        "case_id": str(output_payload.get("case_id", "")).strip(),
+        "output": output_payload,
+        "token_usage": token_usage,
+    }
+    if isinstance(token_usage_session, dict):
+        result_payload["token_usage_session"] = token_usage_session
     write_json(
         run_dir / "result.json",
-        {
-            "run_id": run_id,
-            "case_id": str(output_payload.get("case_id", "")).strip(),
-            "output": output_payload,
-            "token_usage": token_usage,
-        },
+        result_payload,
     )
 
     archive_records_raw = getattr(result, "archive_records", [])
@@ -142,7 +150,12 @@ def persist_run_result(result: Any, *, project_root: Path) -> tuple[Path, dict[s
     return run_dir, environment_payload
 
 
-def serialize_run_result(result: Any, *, project_root: Path) -> dict[str, Any]:
+def serialize_run_result(
+    result: Any,
+    *,
+    project_root: Path,
+    token_usage_session: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     from task_router_graph.schema import to_dict
     from task_router_graph.token_usage import empty_token_usage_summary
 
@@ -154,11 +167,14 @@ def serialize_run_result(result: Any, *, project_root: Path) -> dict[str, Any]:
     token_usage = getattr(result, "token_usage", {})
     if not isinstance(token_usage, dict):
         token_usage = empty_token_usage_summary()
-    return {
+    payload = {
         "environment": environment_payload,
         "output": output_payload,
         "token_usage": token_usage,
     }
+    if isinstance(token_usage_session, dict):
+        payload["token_usage_session"] = token_usage_session
+    return payload
 
 
 def with_heartbeat(task_name: str, fn: Callable[[], T]) -> tuple[T, float]:
