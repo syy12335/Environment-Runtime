@@ -70,7 +70,6 @@ def main() -> None:
         parser = argparse.ArgumentParser()
         parser.add_argument("--config", default="configs/graph.yaml", help="Path to graph config")
         parser.add_argument("--cases-dir", default="data/cases", help="Directory containing case json files")
-        parser.add_argument("--heartbeat-sec", type=float, default=10.0, help="Heartbeat interval seconds (0 to disable)")
         parser.add_argument("--case-timeout-sec", type=float, default=180.0, help="Per-case timeout seconds (0 to disable)")
         parser.add_argument("--fail-fast", action="store_true", help="Stop at first case failure")
         parser.add_argument("--show-traceback", action="store_true", help="Print full traceback for failed cases")
@@ -111,7 +110,6 @@ def main() -> None:
         log(f"Loading graph with config: {display_path(config_path)}")
         graph, _ = with_heartbeat(
             "Graph initialization",
-            args.heartbeat_sec,
             lambda: TaskRouterGraph(config_path=str(config_path)),
         )
 
@@ -127,7 +125,6 @@ def main() -> None:
             try:
                 result, _ = with_heartbeat(
                     f"Case {case_id}",
-                    args.heartbeat_sec,
                     lambda: _run_with_timeout(
                         lambda: graph.run_case(case_file),
                         args.case_timeout_sec,

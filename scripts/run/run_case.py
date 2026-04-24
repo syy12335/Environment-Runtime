@@ -16,6 +16,7 @@ from run_common import (
     ensure_preferred_provider_and_log,
     flush_tracers,
     log,
+    print_cli_line,
     persist_run_result,
     serialize_run_result,
     with_heartbeat,
@@ -27,7 +28,6 @@ def main() -> None:
         parser = argparse.ArgumentParser()
         parser.add_argument("--case", default="data/cases/case_01.json", help="Path to one case JSON")
         parser.add_argument("--config", default="configs/graph.yaml", help="Path to graph config")
-        parser.add_argument("--heartbeat-sec", type=float, default=10.0, help="Heartbeat interval seconds (0 to disable)")
         args = parser.parse_args()
 
         case_path = Path(args.case)
@@ -56,20 +56,18 @@ def main() -> None:
         log(f"Loading graph with config: {display_path(config_path)}")
         graph, _ = with_heartbeat(
             "Graph initialization",
-            args.heartbeat_sec,
             lambda: TaskRouterGraph(config_path=str(config_path)),
         )
 
         log(f"Running case: {case_path.name}")
         result, _ = with_heartbeat(
             f"Case {case_path.stem}",
-            args.heartbeat_sec,
             lambda: graph.run_case(case_path),
         )
         persist_run_result(result, project_root=PROJECT_ROOT)
         payload = serialize_run_result(result, project_root=PROJECT_ROOT)
 
-        print(json.dumps(payload["output"], ensure_ascii=False, indent=2), flush=True)
+        print_cli_line(json.dumps(payload["output"], ensure_ascii=False, indent=2))
     finally:
         flush_tracers()
 

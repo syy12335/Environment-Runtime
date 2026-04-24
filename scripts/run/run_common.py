@@ -5,6 +5,8 @@ import socket
 import threading
 import time
 import json
+import sys
+import unicodedata
 from pathlib import Path
 from typing import Any, Callable, TypeVar
 from urllib.error import HTTPError, URLError
@@ -15,6 +17,12 @@ import yaml
 
 T = TypeVar("T")
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+WAIT_INDICATOR_LABEL = "等待中"
+WAIT_INDICATOR_INTERVAL_SEC = 1.0
+WAIT_INDICATOR_MAX_DOTS = 6
+_OUTPUT_LOCK = threading.RLock()
+_WAIT_INDICATOR_ACTIVE = False
+_WAIT_INDICATOR_WIDTH = 0
 
 
 def flush_tracers() -> None:
@@ -31,7 +39,37 @@ def flush_tracers() -> None:
 
 def log(message: str) -> None:
     ts = time.strftime("%H:%M:%S")
-    print(f"[{ts}] {message}", flush=True)
+    with _OUTPUT_LOCK:
+        clear_wait_line()
+        print(f"[{ts}] {message}", flush=True)
+
+
+def clear_wait_line() -> None:
+    global _WAIT_INDICATOR_ACTIVE, _WAIT_INDICATOR_WIDTH
+    if not _WAIT_INDICATOR_ACTIVE:
+        return
+    if not sys.stdout.isatty():
+        _WAIT_INDICATOR_ACTIVE = False
+        _WAIT_INDICATOR_WIDTH = 0
+        return
+    blank = " " * max(0, _WAIT_INDICATOR_WIDTH)
+    sys.stdout.write(f"\r{blank}\r")
+    sys.stdout.flush()
+    _WAIT_INDICATOR_ACTIVE = False
+    _WAIT_INDICATOR_WIDTH = 0
+
+
+def print_cli_line(message: str = "") -> None:
+    with _OUTPUT_LOCK:
+        clear_wait_line()
+        print(message, flush=True)
+
+
+def _display_width(text: str) -> int:
+    width = 0
+    for char in text:
+        width += 2 if unicodedata.east_asian_width(char) in {"F", "W"} else 1
+    return width
 
 
 def display_path(path: Path | str, *, project_root: Path = PROJECT_ROOT) -> str:
@@ -102,18 +140,31 @@ def serialize_run_result(result: Any, *, project_root: Path) -> dict[str, Any]:
     }
 
 
-def with_heartbeat(task_name: str, interval_sec: float, fn: Callable[[], T]) -> tuple[T, float]:
-    interval_sec = max(0.0, float(interval_sec))
+def with_heartbeat(task_name: str, fn: Callable[[], T]) -> tuple[T, float]:
     start = time.perf_counter()
     stop_event = threading.Event()
+    indicator_enabled = sys.stdout.isatty()
 
     def _heartbeat() -> None:
-        while not stop_event.wait(interval_sec):
-            elapsed = time.perf_counter() - start
-            log(f"{task_name} still running... {elapsed:.0f}s elapsed")
+        global _WAIT_INDICATOR_ACTIVE, _WAIT_INDICATOR_WIDTH
+        dots = 0
+        while True:
+            frame = WAIT_INDICATOR_LABEL + ("." * dots)
+            frame_width = _display_width(frame)
+            with _OUTPUT_LOCK:
+                if not indicator_enabled:
+                    continue
+                padding = " " * max(0, _WAIT_INDICATOR_WIDTH - frame_width)
+                _WAIT_INDICATOR_ACTIVE = True
+                _WAIT_INDICATOR_WIDTH = frame_width
+                sys.stdout.write(f"\r{frame}{padding}")
+                sys.stdout.flush()
+            if stop_event.wait(WAIT_INDICATOR_INTERVAL_SEC):
+                break
+            dots = 0 if dots >= WAIT_INDICATOR_MAX_DOTS else dots + 1
 
     heartbeat_thread = None
-    if interval_sec > 0:
+    if indicator_enabled:
         heartbeat_thread = threading.Thread(target=_heartbeat, daemon=True)
         heartbeat_thread.start()
 
@@ -127,6 +178,8 @@ def with_heartbeat(task_name: str, interval_sec: float, fn: Callable[[], T]) -> 
         stop_event.set()
         if heartbeat_thread is not None:
             heartbeat_thread.join(timeout=0.2)
+        with _OUTPUT_LOCK:
+            clear_wait_line()
 
     elapsed = time.perf_counter() - start
     log(f"{task_name} finished in {elapsed:.1f}s")

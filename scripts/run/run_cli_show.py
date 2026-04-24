@@ -16,6 +16,7 @@ from run_common import (
     ensure_preferred_provider_and_log,
     flush_tracers,
     log,
+    print_cli_line,
     persist_run_result,
     serialize_run_result,
     with_heartbeat,
@@ -36,15 +37,15 @@ def _resolve_input(args: argparse.Namespace) -> str:
 
 def _print_result(result: dict, *, show_environment: bool, show_raw: bool) -> None:
     if show_raw:
-        print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
+        print_cli_line(json.dumps(result, ensure_ascii=False, indent=2))
         return
 
     output = result.get("output", {}) if isinstance(result, dict) else {}
-    print(json.dumps(output, ensure_ascii=False, indent=2), flush=True)
+    print_cli_line(json.dumps(output, ensure_ascii=False, indent=2))
 
     if show_environment:
         environment = result.get("environment", {}) if isinstance(result, dict) else {}
-        print(json.dumps(environment, ensure_ascii=False, indent=2), flush=True)
+        print_cli_line(json.dumps(environment, ensure_ascii=False, indent=2))
 
 
 def _build_environment_show_text(result: dict) -> str:
@@ -65,8 +66,8 @@ def _build_environment_show_text(result: dict) -> str:
 
 
 def _print_show_track(result: dict) -> None:
-    print("\n=== Show Track ===", flush=True)
-    print(_build_environment_show_text(result), flush=True)
+    print_cli_line("\n=== Show Track ===")
+    print_cli_line(_build_environment_show_text(result))
 
 
 def _print_stream_event(event: dict[str, object]) -> None:
@@ -78,7 +79,7 @@ def _print_stream_event(event: dict[str, object]) -> None:
     reply = str(event.get("reply", "")).strip()
     if not reply:
         return
-    print(f"Assistant(progress)> {reply}", flush=True)
+    print_cli_line(f"Assistant(progress)> {reply}")
 
 
 def main() -> None:
@@ -88,7 +89,6 @@ def main() -> None:
         parser.add_argument("--case-id", default="cli", help="Case ID for single-shot mode")
         parser.add_argument("--input", help="Single-shot user input text")
         parser.add_argument("--interactive", action="store_true", help="Interactive chat-like mode")
-        parser.add_argument("--heartbeat-sec", type=float, default=10.0, help="Heartbeat interval seconds (0 to disable)")
         parser.add_argument("--show-environment", action="store_true", help="Print environment payload after output")
         parser.add_argument("--raw", action="store_true", help="Print full result JSON instead of output only")
         args = parser.parse_args()
@@ -119,12 +119,11 @@ def main() -> None:
         log(f"Loading graph with config: {display_path(config_path)}")
         graph, _ = with_heartbeat(
             "Graph initialization",
-            args.heartbeat_sec,
             lambda: TaskRouterGraph(config_path=str(config_path)),
         )
 
         if args.interactive:
-            print("Interactive mode started. Type /exit to quit.", flush=True)
+            print_cli_line("Interactive mode started. Type /exit to quit.")
             turn = 1
             interactive_environment = None
             while True:
@@ -146,7 +145,6 @@ def main() -> None:
                 log(f"Running turn={turn}, case_id={case_id}")
                 result, _ = with_heartbeat(
                     f"Turn {turn}",
-                    args.heartbeat_sec,
                     lambda: graph.run(
                         case_id=case_id,
                         user_input=user_input,
@@ -160,7 +158,7 @@ def main() -> None:
 
                 output = payload.get("output", {}) if isinstance(payload, dict) else {}
                 reply = str(output.get("reply", "")).strip()
-                print(f"Assistant> {reply}", flush=True)
+                print_cli_line(f"Assistant> {reply}")
                 _print_result(payload, show_environment=args.show_environment, show_raw=args.raw)
                 _print_show_track(payload)
                 turn += 1
@@ -170,7 +168,6 @@ def main() -> None:
         log(f"Running single-shot input, case_id={args.case_id}")
         result, _ = with_heartbeat(
             "Single-shot run",
-            args.heartbeat_sec,
             lambda: graph.run(
                 case_id=args.case_id,
                 user_input=user_input,
