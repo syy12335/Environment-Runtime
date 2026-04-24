@@ -10,7 +10,7 @@ SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-
+from task_router_graph.token_usage import TOKEN_USAGE_BUCKETS
 from run_common import (
     display_path,
     ensure_preferred_provider_and_log,
@@ -46,6 +46,53 @@ def _print_result(result: dict, *, show_environment: bool, show_raw: bool) -> No
     if show_environment:
         environment = result.get("environment", {}) if isinstance(result, dict) else {}
         print_cli_line(json.dumps(environment, ensure_ascii=False, indent=2))
+
+
+def _build_token_usage_text(result: dict) -> str:
+    if not isinstance(result, dict):
+        return "[token_usage] invalid result payload"
+
+    token_usage = result.get("token_usage")
+    if not isinstance(token_usage, dict):
+        return "[token_usage] missing token_usage payload"
+
+    lines = [
+        "=== Token Usage ===",
+        f"total_tokens: {int(token_usage.get('total_tokens', 0) or 0)}",
+        f"input_tokens: {int(token_usage.get('input_tokens', 0) or 0)}",
+        f"output_tokens: {int(token_usage.get('output_tokens', 0) or 0)}",
+        f"call_count: {int(token_usage.get('call_count', 0) or 0)}",
+        f"calls_with_usage: {int(token_usage.get('calls_with_usage', 0) or 0)}",
+        f"calls_without_usage: {int(token_usage.get('calls_without_usage', 0) or 0)}",
+        f"is_complete: {bool(token_usage.get('is_complete', False))}",
+    ]
+
+    by_bucket = token_usage.get("by_bucket")
+    if not isinstance(by_bucket, dict):
+        lines.append("by_bucket: <missing>")
+        return "\n".join(lines)
+
+    lines.append("by_bucket:")
+    for bucket in TOKEN_USAGE_BUCKETS:
+        item = by_bucket.get(bucket, {})
+        if not isinstance(item, dict):
+            item = {}
+        lines.append(
+            (
+                f"  {bucket}: "
+                f"total={int(item.get('total_tokens', 0) or 0)} "
+                f"input={int(item.get('input_tokens', 0) or 0)} "
+                f"output={int(item.get('output_tokens', 0) or 0)} "
+                f"calls={int(item.get('call_count', 0) or 0)} "
+                f"missing={int(item.get('calls_without_usage', 0) or 0)} "
+                f"complete={bool(item.get('is_complete', False))}"
+            )
+        )
+    return "\n".join(lines)
+
+
+def _print_token_usage(result: dict) -> None:
+    print_cli_line(_build_token_usage_text(result))
 
 
 def _build_environment_show_text(result: dict) -> str:
@@ -160,6 +207,8 @@ def main() -> None:
                 reply = str(output.get("reply", "")).strip()
                 print_cli_line(f"Assistant> {reply}")
                 _print_result(payload, show_environment=args.show_environment, show_raw=args.raw)
+                if not args.raw:
+                    _print_token_usage(payload)
                 _print_show_track(payload)
                 turn += 1
             return
@@ -177,6 +226,8 @@ def main() -> None:
         persist_run_result(result, project_root=PROJECT_ROOT)
         payload = serialize_run_result(result, project_root=PROJECT_ROOT)
         _print_result(payload, show_environment=args.show_environment, show_raw=args.raw)
+        if not args.raw:
+            _print_token_usage(payload)
         _print_show_track(payload)
     finally:
         flush_tracers()

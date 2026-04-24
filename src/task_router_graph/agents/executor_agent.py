@@ -8,6 +8,7 @@ from jsonschema import ValidationError, validate
 from .agent_utils import extract_text, merge_invoke_config, parse_json_object, replace_last
 from .memory import AgentMemory, ContextCompressionOptions
 from ..protocol_constants import ARG_INPUT, ARG_NAME, TOOL_SKILL_TOOL
+from ..token_usage import TokenUsageRecorder, invoke_with_usage
 
 
 _EXECUTOR_OBSERVE_READ_SCHEMA: dict[str, Any] = {
@@ -112,10 +113,12 @@ class ExecutorAgent:
         llm: Any,
         system_prompt: str,
         context_options: ContextCompressionOptions | None = None,
+        usage_recorder: TokenUsageRecorder | None = None,
     ) -> None:
         self.llm = llm
         self.system_prompt = system_prompt
         self.context_options = context_options or ContextCompressionOptions()
+        self.usage_recorder = usage_recorder
 
     def run(
         self,
@@ -151,6 +154,7 @@ class ExecutorAgent:
             llm=self.llm,
             system_prompt=rendered_system_prompt,
             options=self.context_options,
+            usage_recorder=self.usage_recorder,
         )
         observations: list[dict[str, Any]] = []
         read_calls = 0
@@ -186,7 +190,13 @@ class ExecutorAgent:
                     indent=2,
                 )
             )
-            response = llm.invoke(memory.to_langchain_messages(), config=step_invoke_config)
+            response = invoke_with_usage(
+                llm=llm,
+                messages=memory.to_langchain_messages(),
+                config=step_invoke_config,
+                usage_recorder=self.usage_recorder,
+                bucket="executor",
+            )
 
             text = extract_text(response.content if hasattr(response, "content") else str(response))
             memory.append_assistant(text)
@@ -304,11 +314,13 @@ def run_executor_task(
     invoke_config: dict[str, Any] | None = None,
     context_options: ContextCompressionOptions | None = None,
     recent_rounds_payload: list[dict[str, Any]] | None = None,
+    usage_recorder: TokenUsageRecorder | None = None,
 ) -> dict[str, Any]:
     return ExecutorAgent(
         llm=llm,
         system_prompt=system_prompt,
         context_options=context_options,
+        usage_recorder=usage_recorder,
     ).run(
         task_content=task_content,
         tasks=tasks,

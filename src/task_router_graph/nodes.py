@@ -37,6 +37,7 @@ from .agents.async_workflows import (
     run_perftest_async_workflow,
 )
 from .schema import ControllerAction, Environment, Task
+from .token_usage import TokenUsageRecorder
 
 MAX_LIST_ENTRIES = 200
 MAX_READ_CHARS = 8000
@@ -580,6 +581,7 @@ def route_node(
     invoke_config: dict[str, Any] | None = None,
     context_options: ContextCompressionOptions | None = None,
     environment_context_compress: bool = False,
+    usage_recorder: TokenUsageRecorder | None = None,
 ) -> tuple[Task, list[ControllerAction]]:
     context_options = context_options or ContextCompressionOptions()
     try:
@@ -629,6 +631,7 @@ def route_node(
             invoke_config=invoke_config,
             context_options=context_options,
             recent_rounds_payload=recent_rounds_payload,
+            usage_recorder=usage_recorder,
         )
     except ControllerRouteError as exc:
         task = _build_route_failed_task(user_input=user_input, reason=str(exc))
@@ -680,6 +683,7 @@ def executor_node(
     invoke_config: dict[str, Any] | None = None,
     context_options: ContextCompressionOptions | None = None,
     environment_context_compress: bool = False,
+    usage_recorder: TokenUsageRecorder | None = None,
 ) -> tuple[Task, str, list[dict[str, Any]]]:
     context_options = context_options or ContextCompressionOptions()
     try:
@@ -729,6 +733,7 @@ def executor_node(
         invoke_config=invoke_config,
         context_options=context_options,
         recent_rounds_payload=recent_rounds_payload,
+        usage_recorder=usage_recorder,
     )
     task.status = str(result.get("task_status", "")).strip()
     task.result = str(result.get("task_result", "")).strip()
@@ -819,6 +824,7 @@ def failure_diagnosis_node(
     task: Task,
     invoke_config: dict[str, Any] | None = None,
     context_options: ContextCompressionOptions | None = None,
+    usage_recorder: TokenUsageRecorder | None = None,
 ) -> tuple[Environment, Task]:
     context_options = context_options or ContextCompressionOptions()
     if str(task.status).strip().lower() != "failed":
@@ -848,6 +854,7 @@ def failure_diagnosis_node(
             invoke_config=invoke_config,
             context_options=context_options,
             recent_rounds_payload=environment.build_rounds_view(include_trace=False),
+            usage_recorder=usage_recorder,
         )
     except Exception as exc:
         analysis = f"失败分析不可用: {exc}"
@@ -889,6 +896,7 @@ def reply_node(
     invoke_config: dict[str, Any] | None = None,
     context_options: ContextCompressionOptions | None = None,
     environment_context_compress: bool = False,
+    usage_recorder: TokenUsageRecorder | None = None,
 ) -> str:
     context_options = context_options or ContextCompressionOptions()
     environment_view = environment.build_context_view(
@@ -912,6 +920,7 @@ def reply_node(
             invoke_config=invoke_config,
             context_options=context_options,
             recent_rounds_payload=environment.build_rounds_view(include_trace=False),
+            usage_recorder=usage_recorder,
         )
     except Exception:
         status = str(task.status).strip().lower()

@@ -30,6 +30,7 @@ from .nodes import (
     update_node,
 )
 from .schema import ControllerAction, Environment, Output, Task
+from .token_usage import TokenUsageRecorder, empty_token_usage_summary, invoke_with_usage
 from .utils import read_json, timestamp_tag
 
 
@@ -39,6 +40,7 @@ class GraphRunResult:
     output: Output
     run_id: str
     archive_records: list[dict[str, Any]]
+    token_usage: dict[str, Any]
 
 
 def _short_text_for_rollup(text: str, *, max_len: int) -> str:
@@ -75,6 +77,7 @@ class GraphState(TypedDict, total=False):
     retry_reply_text: str
     pre_execute_track: list[dict[str, Any]]
     recent_workflow_events: list[dict[str, Any]]
+    token_usage_recorder: TokenUsageRecorder
 
 
 class TaskRouterGraph:
@@ -244,6 +247,9 @@ class TaskRouterGraph:
 
     def _init_step(self, state: GraphState) -> GraphState:
         run_id = timestamp_tag()
+        usage_recorder = state.get("token_usage_recorder")
+        if not isinstance(usage_recorder, TokenUsageRecorder):
+            usage_recorder = TokenUsageRecorder()
 
         environment = state["environment"]
         round_item = environment.start_round(user_input=state["user_input"])
@@ -267,6 +273,7 @@ class TaskRouterGraph:
             "retry_reply_text": "",
             "pre_execute_track": [],
             "recent_workflow_events": [],
+            "token_usage_recorder": usage_recorder,
         }
 
     def _collect_workflows_step(self, state: GraphState) -> GraphState:
@@ -328,6 +335,7 @@ class TaskRouterGraph:
             invoke_config=self._build_llm_invoke_config(state=state, node="route"),
             context_options=self._context_options,
             environment_context_compress=self._environment_context_compress,
+            usage_recorder=state.get("token_usage_recorder"),
         )
         retry_phase = bool(state.get("retry_phase", False))
         retry_reason = str(state.get("retry_reason", "")).strip() if retry_phase else ""
@@ -405,6 +413,7 @@ class TaskRouterGraph:
             invoke_config=self._build_llm_invoke_config(state=state, node="executor"),
             context_options=self._context_options,
             environment_context_compress=self._environment_context_compress,
+            usage_recorder=state.get("token_usage_recorder"),
         )
         pre_execute_track = state.get("pre_execute_track", [])
         if isinstance(pre_execute_track, list) and pre_execute_track:
@@ -453,6 +462,7 @@ class TaskRouterGraph:
             task=state["task"],
             invoke_config=self._build_llm_invoke_config(state=state, node="failure_diagnose"),
             context_options=self._context_options,
+            usage_recorder=state.get("token_usage_recorder"),
         )
         return {
             "environment": environment,
@@ -500,6 +510,7 @@ class TaskRouterGraph:
             invoke_config=self._build_llm_invoke_config(state=state, node="final_reply"),
             context_options=self._context_options,
             environment_context_compress=self._environment_context_compress,
+            usage_recorder=state.get("token_usage_recorder"),
         )
         patched_reply = self._prepend_workflow_event_notice_if_missing(
             reply=reply,
@@ -544,7 +555,10 @@ class TaskRouterGraph:
             )
 
         updated_archive_records = list(state.get("archive_records", []))
-        rolled_environment, archive_records = self._rollup_environment_if_needed(environment=environment)
+        rolled_environment, archive_records = self._rollup_environment_if_needed(
+            environment=environment,
+            usage_recorder=state.get("token_usage_recorder"),
+        )
         if archive_records:
             updated_archive_records.extend(archive_records)
 
@@ -1132,7 +1146,12 @@ class TaskRouterGraph:
         except Exception:
             return default
 
-    def _rollup_environment_if_needed(self, *, environment: Environment) -> tuple[Environment, list[dict[str, Any]]]:
+    def _rollup_environment_if_needed(
+        self,
+        *,
+        environment: Environment,
+        usage_recorder: TokenUsageRecorder | None = None,
+    ) -> tuple[Environment, list[dict[str, Any]]]:
         if not self._context_options.history_enabled:
             return environment, []
 
@@ -1169,6 +1188,7 @@ class TaskRouterGraph:
                 raw_summary=rules_summary,
                 recent_rounds=environment.rounds[-max(1, int(self._context_options.recent_rounds)):],
                 target_tokens=summary_tokens,
+                usage_recorder=usage_recorder,
             )
             if llm_summary:
                 final_summary = llm_summary
@@ -1186,7 +1206,7 @@ class TaskRouterGraph:
         environment.rounds = [item for item in environment.rounds if int(item.round_id) not in rolled_round_ids]
         environment.refresh_round_pointer()
         environment.updated_at = datetime.now(timezone.utc).isoformat()
-        self._update_history_meta_summary(environment=environment)
+        self._update_history_meta_summary(environment=environment, usage_recorder=usage_recorder)
 
         archive_records: list[dict[str, Any]] = []
         for round_item in rolled_rounds:
@@ -1276,6 +1296,7 @@ class TaskRouterGraph:
         raw_summary: str,
         recent_rounds: list[Any],
         target_tokens: int,
+        usage_recorder: TokenUsageRecorder | None = None,
     ) -> str:
         schema = {
             "type": "object",
@@ -1303,12 +1324,15 @@ class TaskRouterGraph:
             "recent_rounds": recent_rounds_payload,
         }
         try:
-            response = llm.invoke(
-                json.dumps(prompt_payload, ensure_ascii=False, indent=2),
+            response = invoke_with_usage(
+                llm=llm,
+                messages=json.dumps(prompt_payload, ensure_ascii=False, indent=2),
                 config={
                     "run_name": "task-router.history_rollup_summary",
                     "tags": ["task-router", "llm", "history-rollup"],
                 },
+                usage_recorder=usage_recorder,
+                bucket="history_rollup",
             )
             text = extract_text(getattr(response, "content", response))
             payload = parse_json_object(text)
@@ -1316,7 +1340,12 @@ class TaskRouterGraph:
         except Exception:
             return ""
 
-    def _update_history_meta_summary(self, *, environment: Environment) -> None:
+    def _update_history_meta_summary(
+        self,
+        *,
+        environment: Environment,
+        usage_recorder: TokenUsageRecorder | None = None,
+    ) -> None:
         if not environment.history_summaries:
             environment.history_meta_summary = ""
             return
@@ -1333,6 +1362,7 @@ class TaskRouterGraph:
             raw_summary=joined,
             recent_rounds=environment.rounds[-max(1, int(self._context_options.recent_rounds)) :],
             target_tokens=meta_target,
+            usage_recorder=usage_recorder,
         )
         if llm_summary:
             environment.history_meta_summary = llm_summary
@@ -1685,6 +1715,7 @@ class TaskRouterGraph:
         environment: Environment | None = None,
         on_event: Callable[[dict[str, Any]], None] | None = None,
     ) -> GraphRunResult:
+        usage_recorder = TokenUsageRecorder()
         initial_state: GraphState = {
             "case_id": case_id,
             "user_input": user_input,
@@ -1693,6 +1724,7 @@ class TaskRouterGraph:
             "retry_reason": "",
             "retry_reply_text": "",
             "pre_execute_track": [],
+            "token_usage_recorder": usage_recorder,
         }
         if on_event is None:
             result_state = self._run_state_invoke(initial_state=initial_state, case_id=case_id)
@@ -1708,6 +1740,7 @@ class TaskRouterGraph:
         reply = str(result_state.get("reply", ""))
         run_id = str(result_state.get("run_id", "")).strip()
         archive_records_raw = result_state.get("archive_records", [])
+        result_usage_recorder = result_state.get("token_usage_recorder")
 
         if not isinstance(env, Environment):
             raise KeyError("graph result missing environment")
@@ -1722,6 +1755,11 @@ class TaskRouterGraph:
                 if isinstance(item, dict):
                     archive_records.append(dict(item))
 
+        if isinstance(result_usage_recorder, TokenUsageRecorder):
+            token_usage = result_usage_recorder.summary()
+        else:
+            token_usage = usage_recorder.summary() if isinstance(usage_recorder, TokenUsageRecorder) else empty_token_usage_summary()
+
         output = Output(
             case_id=case_id,
             task_type=task.type,
@@ -1735,6 +1773,7 @@ class TaskRouterGraph:
             output=output,
             run_id=run_id,
             archive_records=archive_records,
+            token_usage=token_usage,
         )
 
     def run_stream(

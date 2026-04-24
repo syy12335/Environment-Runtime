@@ -8,6 +8,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from .agent_utils import extract_text, parse_json_object
+from ..token_usage import TokenUsageRecorder, invoke_with_usage
 
 
 _SUMMARY_OUTPUT_SCHEMA: dict[str, Any] = {
@@ -105,9 +106,11 @@ class AgentMemory:
         llm: Any,
         system_prompt: str,
         options: ContextCompressionOptions,
+        usage_recorder: TokenUsageRecorder | None = None,
     ) -> None:
         self.llm = llm
         self.options = options
+        self.usage_recorder = usage_recorder
         self.messages: list[dict[str, str]] = [{"role": "system", "content": str(system_prompt)}]
         self.private_summary = ""
         self._last_compress_step = 0
@@ -207,8 +210,9 @@ class AgentMemory:
             "messages": compressible,
         }
 
-        response = llm.invoke(
-            [
+        response = invoke_with_usage(
+            llm=llm,
+            messages=[
                 SystemMessage(
                     content=(
                         "You compress chat memory. Keep facts, constraints, tool findings, and unresolved questions. "
@@ -218,6 +222,8 @@ class AgentMemory:
                 HumanMessage(content=json.dumps(prompt_payload, ensure_ascii=False, indent=2)),
             ],
             config=invoke_config,
+            usage_recorder=self.usage_recorder,
+            bucket="context_compression",
         )
         text = extract_text(response.content if hasattr(response, "content") else str(response))
         payload = parse_json_object(text)

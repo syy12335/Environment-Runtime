@@ -5,6 +5,7 @@ from typing import Any
 
 from .agent_utils import extract_text, merge_invoke_config, parse_json_object, replace_last
 from .memory import AgentMemory, ContextCompressionOptions
+from ..token_usage import TokenUsageRecorder, invoke_with_usage
 
 
 _FAILURE_DIAGNOSIS_OUTPUT_SCHEMA: dict[str, Any] = {
@@ -18,10 +19,18 @@ _FAILURE_DIAGNOSIS_OUTPUT_SCHEMA: dict[str, Any] = {
 
 
 class FailureDiagnosisAgent:
-    def __init__(self, *, llm: Any, system_prompt: str, context_options: ContextCompressionOptions | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        llm: Any,
+        system_prompt: str,
+        context_options: ContextCompressionOptions | None = None,
+        usage_recorder: TokenUsageRecorder | None = None,
+    ) -> None:
         self.llm = llm
         self.system_prompt = system_prompt
         self.context_options = context_options or ContextCompressionOptions()
+        self.usage_recorder = usage_recorder
 
     def run(
         self,
@@ -52,10 +61,17 @@ class FailureDiagnosisAgent:
             llm=self.llm,
             system_prompt=rendered_system_prompt,
             options=self.context_options,
+            usage_recorder=self.usage_recorder,
         )
         memory.append_user("请只输出一个合法 JSON 对象，不要输出解释或 Markdown。")
         memory.maybe_compress_context(step=1, recent_rounds_payload=recent_rounds_payload, invoke_config=step_invoke_config)
-        response = llm.invoke(memory.to_langchain_messages(), config=step_invoke_config)
+        response = invoke_with_usage(
+            llm=llm,
+            messages=memory.to_langchain_messages(),
+            config=step_invoke_config,
+            usage_recorder=self.usage_recorder,
+            bucket="failure_analysis",
+        )
 
         text = extract_text(response.content if hasattr(response, "content") else str(response))
         memory.append_assistant(text)
@@ -81,11 +97,13 @@ def run_failure_diagnosis_task(
     invoke_config: dict[str, Any] | None = None,
     context_options: ContextCompressionOptions | None = None,
     recent_rounds_payload: list[dict[str, Any]] | None = None,
+    usage_recorder: TokenUsageRecorder | None = None,
 ) -> str:
     return FailureDiagnosisAgent(
         llm=llm,
         system_prompt=system_prompt,
         context_options=context_options,
+        usage_recorder=usage_recorder,
     ).run(
         task=task,
         track=track,

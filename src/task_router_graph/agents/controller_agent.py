@@ -7,6 +7,7 @@ from jsonschema import ValidationError
 
 from .agent_utils import extract_text, merge_invoke_config, parse_json_object, replace_last
 from .memory import AgentMemory, ContextCompressionOptions
+from ..token_usage import TokenUsageRecorder, invoke_with_usage
 from ..schema import CONTROLLER_ACTION_SCHEMA, CONTROLLER_OUTPUT_CONSTRAINTS, validate_controller_action_payload
 
 
@@ -24,11 +25,13 @@ class ControllerAgent:
         system_prompt: str,
         max_steps: int = 3,
         context_options: ContextCompressionOptions | None = None,
+        usage_recorder: TokenUsageRecorder | None = None,
     ) -> None:
         self.llm = llm
         self.system_prompt = system_prompt
         self.max_steps = max_steps
         self.context_options = context_options or ContextCompressionOptions()
+        self.usage_recorder = usage_recorder
 
     def run(
         self,
@@ -60,6 +63,7 @@ class ControllerAgent:
             llm=self.llm,
             system_prompt=rendered_system_prompt,
             options=self.context_options,
+            usage_recorder=self.usage_recorder,
         )
         observations: list[dict[str, Any]] = []
 
@@ -86,7 +90,13 @@ class ControllerAgent:
                     indent=2,
                 )
             )
-            response = llm.invoke(memory.to_langchain_messages(), config=step_invoke_config)
+            response = invoke_with_usage(
+                llm=llm,
+                messages=memory.to_langchain_messages(),
+                config=step_invoke_config,
+                usage_recorder=self.usage_recorder,
+                bucket="controller",
+            )
 
             text = extract_text(response.content if hasattr(response, "content") else str(response))
             memory.append_assistant(text)
@@ -204,12 +214,14 @@ def route_task(
     invoke_config: dict[str, Any] | None = None,
     context_options: ContextCompressionOptions | None = None,
     recent_rounds_payload: list[dict[str, Any]] | None = None,
+    usage_recorder: TokenUsageRecorder | None = None,
 ) -> dict[str, Any]:
     return ControllerAgent(
         llm=llm,
         system_prompt=system_prompt,
         max_steps=max_steps,
         context_options=context_options,
+        usage_recorder=usage_recorder,
     ).run(
         user_input=user_input,
         tasks=tasks,

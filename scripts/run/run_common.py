@@ -98,6 +98,7 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
 
 
 def persist_run_result(result: Any, *, project_root: Path) -> tuple[Path, dict[str, Any]]:
+    from task_router_graph.token_usage import empty_token_usage_summary
     from task_router_graph.utils import write_json
 
     run_id = str(getattr(result, "run_id", "")).strip()
@@ -116,6 +117,21 @@ def persist_run_result(result: Any, *, project_root: Path) -> tuple[Path, dict[s
     environment_payload["case_id"] = str(getattr(output, "case_id", "")).strip()
     write_json(run_dir / "environment.json", environment_payload)
 
+    output_payload = output.to_dict()
+    output_payload["run_dir"] = str(run_dir.relative_to(project_root))
+    token_usage = getattr(result, "token_usage", {})
+    if not isinstance(token_usage, dict):
+        token_usage = empty_token_usage_summary()
+    write_json(
+        run_dir / "result.json",
+        {
+            "run_id": run_id,
+            "case_id": str(output_payload.get("case_id", "")).strip(),
+            "output": output_payload,
+            "token_usage": token_usage,
+        },
+    )
+
     archive_records_raw = getattr(result, "archive_records", [])
     archive_records: list[dict[str, Any]] = []
     if isinstance(archive_records_raw, list):
@@ -128,15 +144,20 @@ def persist_run_result(result: Any, *, project_root: Path) -> tuple[Path, dict[s
 
 def serialize_run_result(result: Any, *, project_root: Path) -> dict[str, Any]:
     from task_router_graph.schema import to_dict
+    from task_router_graph.token_usage import empty_token_usage_summary
 
     run_dir = resolve_run_dir(project_root=project_root, run_id=str(getattr(result, "run_id", "")))
     output_payload = to_dict(getattr(result, "output"))
     output_payload["run_dir"] = str(run_dir.relative_to(project_root))
     environment_payload = getattr(result, "environment").to_dict(include_trace=True)
     environment_payload["case_id"] = str(output_payload.get("case_id", "")).strip()
+    token_usage = getattr(result, "token_usage", {})
+    if not isinstance(token_usage, dict):
+        token_usage = empty_token_usage_summary()
     return {
         "environment": environment_payload,
         "output": output_payload,
+        "token_usage": token_usage,
     }
 
 
