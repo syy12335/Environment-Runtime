@@ -1,0 +1,26 @@
+{
+  "dataset": "task_router_graph_train_manual_protocol_v1",
+  "version": "v1.0.0",
+  "bucket_registry": [
+    "running_status_observe",
+    "failed_track_observe",
+    "time_anchor_observe",
+    "ambiguous_context_observe",
+    "history_summary_generate",
+    "generate_executor",
+    "generate_functest",
+    "generate_accutest",
+    "generate_perftest",
+    "failed_retry_generate"
+  ],
+  "counts_by_split": {
+    "sft_train": 90,
+    "sft_eval": 30,
+    "holdout": 80
+  },
+  "counts_by_bucket_split": {
+    "sft_train": 9,
+    "sft_eval": 3,
+    "holdout": 8
+  }
+}
