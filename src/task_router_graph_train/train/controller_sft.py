@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 from pathlib import Path
 from typing import Any
 
@@ -127,6 +128,57 @@ class ControllerSftDataCollator:
         }
 
 
+def _build_training_arguments(
+    *,
+    TrainingArguments: Any,
+    output_dir: Path,
+    do_eval: bool,
+    per_device_train_batch_size: int,
+    gradient_accumulation_steps: int,
+    learning_rate: float,
+    num_train_epochs: int,
+    seed: int,
+    bf16: bool,
+    fp16: bool,
+    gradient_checkpointing: bool,
+    torch_empty_cache_steps: int | None,
+) -> Any:
+    parameters = inspect.signature(TrainingArguments.__init__).parameters
+    kwargs: dict[str, Any] = {
+        "output_dir": str(output_dir),
+        "do_train": True,
+        "do_eval": bool(do_eval),
+        "save_strategy": "epoch",
+        "logging_strategy": "steps",
+        "logging_steps": 1,
+        "per_device_train_batch_size": per_device_train_batch_size,
+        "per_device_eval_batch_size": 1,
+        "gradient_accumulation_steps": gradient_accumulation_steps,
+        "learning_rate": learning_rate,
+        "num_train_epochs": num_train_epochs,
+        "remove_unused_columns": False,
+        "report_to": [],
+        "save_total_limit": 2,
+        "seed": seed,
+        "data_seed": seed,
+    }
+    if "bf16" in parameters:
+        kwargs["bf16"] = bool(bf16)
+    if "fp16" in parameters:
+        kwargs["fp16"] = bool(fp16)
+    if "gradient_checkpointing" in parameters:
+        kwargs["gradient_checkpointing"] = bool(gradient_checkpointing)
+    if torch_empty_cache_steps is not None and "torch_empty_cache_steps" in parameters:
+        kwargs["torch_empty_cache_steps"] = int(torch_empty_cache_steps)
+    if "evaluation_strategy" in parameters:
+        kwargs["evaluation_strategy"] = "epoch" if do_eval else "no"
+    elif "eval_strategy" in parameters:
+        kwargs["eval_strategy"] = "epoch" if do_eval else "no"
+    if "overwrite_output_dir" in parameters:
+        kwargs["overwrite_output_dir"] = True
+    return TrainingArguments(**kwargs)
+
+
 def _resolve_sft_input_paths(
     *,
     train_examples: Path | None,
@@ -169,6 +221,10 @@ def train_controller_sft(
     lora_alpha: int = 16,
     lora_dropout: float = 0.05,
     seed: int = 42,
+    bf16: bool = False,
+    fp16: bool = False,
+    gradient_checkpointing: bool = False,
+    torch_empty_cache_steps: int | None = None,
 ) -> dict[str, Any]:
     dependencies = _require_training_dependencies()
     torch = dependencies["torch"]
@@ -193,7 +249,14 @@ def train_controller_sft(
     set_seed(seed)
 
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, use_fast=True)
-    model = AutoModelForCausalLM.from_pretrained(model_name_or_path)
+    model_load_kwargs: dict[str, Any] = {}
+    if bf16:
+        model_load_kwargs["torch_dtype"] = torch.bfloat16
+    elif fp16:
+        model_load_kwargs["torch_dtype"] = torch.float16
+    model = AutoModelForCausalLM.from_pretrained(model_name_or_path, **model_load_kwargs)
+    if gradient_checkpointing and hasattr(model, "config"):
+        model.config.use_cache = False
 
     tokenizer_was_resized = False
     if tokenizer.pad_token_id is None:
@@ -232,25 +295,19 @@ def train_controller_sft(
             )
 
     collator = ControllerSftDataCollator(pad_token_id=int(tokenizer.pad_token_id))
-    training_args = TrainingArguments(
-        output_dir=str(output_dir),
-        overwrite_output_dir=True,
-        do_train=True,
+    training_args = _build_training_arguments(
+        TrainingArguments=TrainingArguments,
+        output_dir=output_dir,
         do_eval=eval_dataset is not None,
-        evaluation_strategy="epoch" if eval_dataset is not None else "no",
-        save_strategy="epoch",
-        logging_strategy="steps",
-        logging_steps=1,
         per_device_train_batch_size=per_device_train_batch_size,
-        per_device_eval_batch_size=1,
         gradient_accumulation_steps=gradient_accumulation_steps,
         learning_rate=learning_rate,
         num_train_epochs=num_train_epochs,
-        remove_unused_columns=False,
-        report_to=[],
-        save_total_limit=2,
         seed=seed,
-        data_seed=seed,
+        bf16=bf16,
+        fp16=fp16,
+        gradient_checkpointing=gradient_checkpointing,
+        torch_empty_cache_steps=torch_empty_cache_steps,
     )
     trainer = Trainer(
         model=model,
@@ -277,6 +334,10 @@ def train_controller_sft(
         "lora_alpha": lora_alpha,
         "lora_dropout": lora_dropout,
         "seed": seed,
+        "bf16": bool(bf16),
+        "fp16": bool(fp16),
+        "gradient_checkpointing": bool(gradient_checkpointing),
+        "torch_empty_cache_steps": torch_empty_cache_steps,
         "round_id": str(round_id or "latest"),
     }
     (output_dir / "train_config.json").write_text(
