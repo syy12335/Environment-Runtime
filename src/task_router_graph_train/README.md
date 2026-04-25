@@ -249,15 +249,15 @@ PYTHONPATH=src python -m task_router_graph_train.cli.evaluate \
 正式文档在 `src/task_router_graph_train/docs/`：
 
 - `overview.md`
-  - 模块定位、闭环总览、主要入口和输出约定
+  - 模块定位和主线总览
 - `data_contract.md`
-  - teacher_source、TrainingRecord、feedback manifest 和 badcase 回流契约
-- `eval_spec.md`
-  - holdout evaluator、controller regression、coverage 面板与失败回流
+  - 当前主线对象和数据契约
 - `controller_grpo_reward_spec.md`
   - controller-only `GRPO` reward 正式口径
-- `training_plan_v1.md`
-  - controller-only v1 训练路线与非目标
+- `post_training_v1.md`
+  - `SFT / GRPO / badcase` 回流规则
+- `manual_protocol_v1_draft.md`
+  - 手写推敲稿
 
 学习材料在 `.private/task_router_graph_train/`：
 
