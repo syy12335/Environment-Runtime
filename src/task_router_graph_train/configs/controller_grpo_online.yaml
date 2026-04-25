@@ -1,3 +1,22 @@
+seed: 42
+
+round:
+  id: round_0001
+  previous_round_id: ""
+
+run:
+  sft: false
+  grpo_export_only: true
+  grpo_full_update: false
+  evaluate: false
+  annotate_queue: false
+
+outputs:
+  sft_dir: var/runs/task_router_graph_train/sft/{round_id}
+  grpo_dir: var/runs/task_router_graph_train/grpo/{round_id}
+  eval_dir: var/runs/task_router_graph_train/eval/{round_id}
+  holdout_predictions: var/runs/task_router_graph_train/predictions/{round_id}_holdout_predictions.jsonl
+
 teacher:
   mode: online
   base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
@@ -79,6 +98,9 @@ data:
 controller_state_view:
   compress: false
   compress_target_tokens: null
+
+sft:
+  total_epochs: 5
 
 feedback:
   auto_sft_confidence_threshold: 0.85
