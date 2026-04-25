@@ -8,7 +8,7 @@ from ..train import train_controller_sft
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train the minimal controller SFT warm-start adapter.")
+    parser = argparse.ArgumentParser(description="Train controller SFT from latest prepared round assets.")
     parser.add_argument("--model-name-or-path", required=True, help="Model id or local model directory.")
     parser.add_argument(
         "--lora-target-modules",
@@ -17,29 +17,29 @@ def parse_args() -> argparse.Namespace:
         help="Explicit LoRA target modules, for example: q_proj v_proj.",
     )
     parser.add_argument(
-        "--asset-manifest",
+        "--round-id",
         default="",
-        help="Preferred safe input. Path to completed feedback manifest with sft_examples_v1 asset.",
+        help="Round id to read SFT examples from. Default: latest prepared round.",
     )
     parser.add_argument(
-        "--run-dir",
+        "--round-manifest",
         default="",
-        help="Preferred safe input. Run directory containing a completed feedback manifest.",
+        help="Optional explicit round_manifest.json path.",
     )
     parser.add_argument(
         "--train-examples",
         default="",
-        help="Unsafe override path to controller train examples jsonl.",
+        help="Unsafe override path to train examples jsonl.",
     )
     parser.add_argument(
         "--eval-examples",
         default="",
-        help="Unsafe override path to controller eval examples jsonl.",
+        help="Unsafe override path to eval examples jsonl.",
     )
     parser.add_argument(
         "--allow-unsafe-path-input",
         action="store_true",
-        help="Allow direct --train-examples/--eval-examples paths instead of manifest/run-dir.",
+        help="Allow direct --train-examples/--eval-examples paths instead of round manifest.",
     )
     parser.add_argument(
         "--output-dir",
@@ -63,10 +63,10 @@ def main() -> None:
     report = train_controller_sft(
         model_name_or_path=args.model_name_or_path,
         lora_target_modules=list(args.lora_target_modules),
+        round_id=args.round_id.strip() or None,
+        round_manifest=Path(args.round_manifest).resolve() if args.round_manifest.strip() else None,
         train_examples=Path(args.train_examples).resolve() if args.train_examples.strip() else None,
         eval_examples=Path(args.eval_examples).resolve() if args.eval_examples.strip() else None,
-        asset_manifest=Path(args.asset_manifest).resolve() if args.asset_manifest.strip() else None,
-        run_dir=Path(args.run_dir).resolve() if args.run_dir.strip() else None,
         allow_unsafe_path_input=bool(args.allow_unsafe_path_input),
         output_dir=Path(args.output_dir).resolve(),
         num_train_epochs=args.num_train_epochs,

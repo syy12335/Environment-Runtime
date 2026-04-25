@@ -54,7 +54,7 @@ _REWARD_SPEC_OBJECTS = [
     RewardSpec(
         spec_id=GRAPH_EVAL_SPEC_ID,
         mode="eval_only",
-        description="Locked holdout scorer for end-to-end graph runs on the sanitized k20 holdout.",
+        description="Locked holdout scorer for end-to-end graph runs on the fixed manual_protocol holdout.",
         # graph_eval_v1 只负责锁定 holdout 的整体验收，不进入当前 RL 优化。
         weights={
             "status_semantic_accuracy": 4.0,

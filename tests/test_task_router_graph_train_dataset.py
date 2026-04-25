@@ -1,128 +1,61 @@
 from __future__ import annotations
 
-import copy
+import json
 from pathlib import Path
 
-from task_router_graph_train.dataset import (
-    FORMAL_ENVIRONMENT_KEYS,
-    build_k20_holdout_records,
-    rewrite_k20_snapshots_with_sidecar,
-    sanitize_environment_payload,
-)
-from task_router_graph_train.runtime_adapter import ASSETS_ROOT, REPO_ROOT, build_controller_state_input
+from task_router_graph_train.dataset import prepare_round_assets, read_jsonl
+from task_router_graph_train.runtime_adapter import ASSETS_ROOT, build_controller_state_input
 
 
-def test_sanitize_environment_payload_moves_verifier_only_fields() -> None:
-    environment_payload = {
-        "cur_round": 3,
-        "rounds": [],
-        "running_refs": ["round_id=2, task_id=1"],
-        "pending_collect": {"run_id": "pyskill:demo"},
-    }
-
-    sanitized_environment, verifier_sidecar = sanitize_environment_payload(environment_payload)
-
-    assert sorted(sanitized_environment.keys()) == ["cur_round", "history_meta_summary", "history_summaries", "rounds"]
-    assert "running_refs" not in sanitized_environment
-    assert verifier_sidecar["running_refs"] == ["round_id=2, task_id=1"]
-    assert verifier_sidecar["pending_collect"] == {"run_id": "pyskill:demo"}
-
-
-def test_build_k20_holdout_records_produces_sanitized_graph_eval_records(tmp_path: Path) -> None:
-    source_dir = ASSETS_ROOT / "eval_samples" / "manual_eval"
-    dataset_dir = tmp_path / "manual_eval"
-    dataset_dir.mkdir(parents=True, exist_ok=True)
-
-    for name in ("scenarios.jsonl", "snapshots.jsonl", "labels.jsonl", "manifest.json"):
-        (dataset_dir / name).write_text((source_dir / name).read_text(encoding="utf-8"), encoding="utf-8")
-
-    rewrite_k20_snapshots_with_sidecar(dataset_dir)
-    records, manifest = build_k20_holdout_records(
-        dataset_dir=dataset_dir,
-        workspace_root=REPO_ROOT,
+def test_prepare_round_assets_builds_required_outputs(tmp_path: Path) -> None:
+    round_root = tmp_path / "rounds"
+    report = prepare_round_assets(
+        round_id="round_0001",
+        round_assets_root=round_root,
+        manual_protocol_dir=ASSETS_ROOT / "manual_protocol_v1",
     )
 
-    assert manifest.record_count == 20
-    assert len(records) == 20
-    assert {record.role for record in records} == {"graph_eval"}
+    round_dir = Path(report["round_dir"])
+    assert (round_dir / "round_manifest.json").exists()
+    assert (round_dir / "sft_examples_train.jsonl").exists()
+    assert (round_dir / "sft_examples_eval.jsonl").exists()
+    assert (round_dir / "controller_records_train.jsonl").exists()
+    assert (round_dir / "controller_records_eval.jsonl").exists()
+    assert (round_dir / "holdout_records.jsonl").exists()
+    assert (round_dir / "teacher_queue.jsonl").exists()
+    assert (round_dir / "sft_admissions.jsonl").exists()
 
-    sample_with_sidecar = next(record for record in records if record.sample_id == "k20_019")
-    environment_payload = sample_with_sidecar.state_input["ENVIRONMENT"]
-    assert set(environment_payload).issubset(set(FORMAL_ENVIRONMENT_KEYS))
-    assert "collected_items" in sample_with_sidecar.verifier_sidecar.environment_extras
-    assert "running_refs" in sample_with_sidecar.verifier_sidecar.environment_extras
-    assert "controller" in sample_with_sidecar.verifier_sidecar.runtime_shape_preview
-    assert "reply" in sample_with_sidecar.verifier_sidecar.runtime_shape_preview
+    holdout_rows = read_jsonl(round_dir / "holdout_records.jsonl")
+    sft_rows = read_jsonl(round_dir / "sft_examples_train.jsonl") + read_jsonl(round_dir / "sft_examples_eval.jsonl")
+    assert holdout_rows
+    assert sft_rows
+    holdout_ids = {row["sample_id"] for row in holdout_rows}
+    assert not (holdout_ids & {row["sample_id"] for row in sft_rows})
 
 
-def test_build_controller_state_input_uses_runtime_shape() -> None:
-    environment_payload = {
-        "cur_round": 1,
-        "rounds": [
-            {
-                "round_id": 1,
-                "user_input": "继续",
-                "reply": "",
-                "tasks": [
-                    {
-                        "task_id": 1,
-                        "task": {
-                            "task_id": 1,
-                            "type": "executor",
-                            "content": "查询昨日大事",
-                            "status": "failed",
-                            "result": "executor failed\n[失败分析] 下一轮直接调用web_search",
-                        },
-                        "track": [{"agent": "diagnoser", "event": "analyze"}],
-                    }
-                ],
-            }
-        ],
-    }
+def test_prepare_round_assets_merges_previous_admissions(tmp_path: Path) -> None:
+    round_root = tmp_path / "rounds"
+    first = prepare_round_assets(round_id="round_0001", round_assets_root=round_root)
+    first_dir = Path(first["round_dir"])
 
-    state_input = build_controller_state_input(
-        user_input="继续重试",
-        environment_payload=copy.deepcopy(environment_payload),
-        workspace_root=REPO_ROOT,
+    admission_state = build_controller_state_input(
+        user_input="请继续处理",
+        environment_payload={"rounds": [], "cur_round": 1, "history_summaries": [], "history_meta_summary": ""},
+    )
+    (first_dir / "sft_admissions.jsonl").write_text(
+        '{"sample_id":"adm_001","state_input":' +
+        json.dumps(admission_state, ensure_ascii=False) +
+        ',"reference_action":{"action_kind":"observe","tool":"build_context_view","args":{"round_limit":3,"include_trace":false,"include_user_input":true,"include_task":true,"include_reply":true},"reason":"补充观察"},"reason":"admit","source_round":"round_0001"}\n',
+        encoding="utf-8",
     )
 
-    assert set(state_input) == {"USER_INPUT", "ENVIRONMENT_JSON", "SKILLS_INDEX"}
-    environment_json = state_input["ENVIRONMENT_JSON"]
-    assert environment_json["cur_round"] == 1
-    assert environment_json["previous_failed_task"]["task"]["status"] == "failed"
-    assert '"name"' in state_input["SKILLS_INDEX"]
-
-
-def test_build_controller_state_input_supports_compressed_view() -> None:
-    environment_payload = {
-        "cur_round": 2,
-        "rounds": [
-            {
-                "round_id": 2,
-                "user_input": "继续",
-                "reply": "y" * 300,
-                "tasks": [
-                    {
-                        "task_id": 1,
-                        "task": {
-                            "task_id": 1,
-                            "type": "executor",
-                            "content": "查询昨日大事",
-                            "status": "done",
-                            "result": "x" * 600,
-                        },
-                        "track": [],
-                    }
-                ],
-            }
-        ],
-    }
-    state_input = build_controller_state_input(
-        user_input="继续重试",
-        environment_payload=copy.deepcopy(environment_payload),
-        workspace_root=REPO_ROOT,
-        compress=True,
-        compress_target_tokens=80,
+    second = prepare_round_assets(
+        round_id="round_0002",
+        previous_round_id="round_0001",
+        round_assets_root=round_root,
     )
-    payload_text = str(state_input["ENVIRONMENT_JSON"]["rounds"][0]["tasks"][0]["task"]["result"])
-    assert "[COMPACTED_VIEW]" in payload_text
+    second_dir = Path(second["round_dir"])
+    sft_train = read_jsonl(second_dir / "sft_examples_train.jsonl")
+    sft_eval = read_jsonl(second_dir / "sft_examples_eval.jsonl")
+    all_ids = {row["sample_id"] for row in (sft_train + sft_eval)}
+    assert "adm_001" in all_ids

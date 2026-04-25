@@ -4,8 +4,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ..artifacts import SFT_EXAMPLES_ARTIFACT_TYPE, load_completed_manifest, resolve_named_asset, to_safe_path
+from ..artifacts import to_safe_path
 from ..dataset import read_jsonl
+from ..rounds import load_round_manifest, resolve_round_asset_path
 from ..types import SftExample
 
 
@@ -130,25 +131,20 @@ def _resolve_sft_input_paths(
     *,
     train_examples: Path | None,
     eval_examples: Path | None,
-    asset_manifest: Path | None,
-    run_dir: Path | None,
+    round_id: str | None,
+    round_manifest: Path | None,
     allow_unsafe_path_input: bool,
 ) -> tuple[Path, Path, str]:
-    if asset_manifest is not None or run_dir is not None:
-        manifest = load_completed_manifest(asset_manifest=asset_manifest, run_dir=run_dir)
-        asset = resolve_named_asset(
-            manifest=manifest,
-            asset_name="sft_examples_v1",
-            expected_artifact_type=SFT_EXAMPLES_ARTIFACT_TYPE,
-        )
+    if round_id is not None or round_manifest is not None or (train_examples is None and eval_examples is None):
+        manifest = load_round_manifest(round_id=round_id, manifest_path=round_manifest)
         return (
-            Path(str(asset["train_path"])).resolve(),
-            Path(str(asset["eval_path"])).resolve(),
+            resolve_round_asset_path(manifest, "sft_examples_train"),
+            resolve_round_asset_path(manifest, "sft_examples_eval"),
             str(manifest.get("_manifest_path", "")),
         )
 
     if train_examples is None or eval_examples is None:
-        raise ValueError("asset_manifest/run_dir is required unless unsafe train_examples/eval_examples are provided")
+        raise ValueError("both train_examples and eval_examples are required when bypassing round manifest")
     if not allow_unsafe_path_input:
         raise ValueError("direct --train-examples/--eval-examples usage requires allow_unsafe_path_input=true")
     return (Path(train_examples).resolve(), Path(eval_examples).resolve(), "")
@@ -160,8 +156,8 @@ def train_controller_sft(
     lora_target_modules: list[str],
     train_examples: Path | None = None,
     eval_examples: Path | None = None,
-    asset_manifest: Path | None = None,
-    run_dir: Path | None = None,
+    round_id: str | None = None,
+    round_manifest: Path | None = None,
     allow_unsafe_path_input: bool = False,
     output_dir: Path,
     num_train_epochs: int = 5,
@@ -188,8 +184,8 @@ def train_controller_sft(
     resolved_train_examples, resolved_eval_examples, input_manifest_path = _resolve_sft_input_paths(
         train_examples=train_examples,
         eval_examples=eval_examples,
-        asset_manifest=asset_manifest,
-        run_dir=run_dir,
+        round_id=round_id,
+        round_manifest=round_manifest,
         allow_unsafe_path_input=allow_unsafe_path_input,
     )
 
@@ -281,6 +277,7 @@ def train_controller_sft(
         "lora_alpha": lora_alpha,
         "lora_dropout": lora_dropout,
         "seed": seed,
+        "round_id": str(round_id or "latest"),
     }
     (output_dir / "train_config.json").write_text(
         json.dumps(train_config, ensure_ascii=False, indent=2) + "\n",
@@ -349,10 +346,7 @@ def generate_eval_rows(
             return_tensors="pt",
             add_special_tokens=False,
         )
-        prompt_inputs = {
-            key: value.to(model_device)
-            for key, value in prompt_inputs.items()
-        }
+        prompt_inputs = {key: value.to(model_device) for key, value in prompt_inputs.items()}
         with _inference_context():
             outputs = model.generate(
                 **prompt_inputs,

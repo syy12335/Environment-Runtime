@@ -49,6 +49,24 @@ class TrainingRecord:
 
 
 @dataclass
+class SftExample:
+    sample_id: str
+    split: str
+    prompt: str
+    target_text: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "sample_id": self.sample_id,
+            "split": self.split,
+            "prompt": self.prompt,
+            "target_text": self.target_text,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass
 class RewardSpec:
     spec_id: str
     mode: str
@@ -89,18 +107,58 @@ class EvalManifest:
 
 
 @dataclass
-class SftExample:
+class TeacherQueueRow:
     sample_id: str
-    split: str
-    prompt: str
-    target_text: str
-    metadata: dict[str, Any] = field(default_factory=dict)
+    source: str
+    trigger_reason: str
+    state_input: dict[str, Any]
+    policy_output: dict[str, Any]
+    dedup_key: str
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "sample_id": self.sample_id,
-            "split": self.split,
-            "prompt": self.prompt,
-            "target_text": self.target_text,
-            "metadata": dict(self.metadata),
+            "source": self.source,
+            "trigger_reason": self.trigger_reason,
+            "state_input": dict(self.state_input),
+            "policy_output": dict(self.policy_output),
+            "dedup_key": self.dedup_key,
+        }
+
+
+@dataclass
+class SftAdmissionRow:
+    sample_id: str
+    state_input: dict[str, Any]
+    reference_action: dict[str, Any]
+    reason: str
+    source_round: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "sample_id": self.sample_id,
+            "state_input": dict(self.state_input),
+            "reference_action": dict(self.reference_action),
+            "reason": self.reason,
+            "source_round": self.source_round,
+        }
+
+
+@dataclass
+class HoldoutEvalRow:
+    sample_id: str
+    state_input: dict[str, Any]
+    gold_action: dict[str, Any]
+    prediction_action: dict[str, Any]
+    semantic_pass: bool
+    judge_reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "sample_id": self.sample_id,
+            "state_input": dict(self.state_input),
+            "gold_action": dict(self.gold_action),
+            "prediction_action": dict(self.prediction_action),
+            "semantic_pass": bool(self.semantic_pass),
+            "judge_reason": self.judge_reason,
         }
