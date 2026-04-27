@@ -52,6 +52,9 @@ fi
 
 (
   source "$CONDA_ACTIVATE" "$CONDA_ENV"
+  export PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
+  export TASK_ROUTER_SGLANG_CHAT_TEMPLATE_FIX="${TASK_ROUTER_SGLANG_CHAT_TEMPLATE_FIX:-1}"
+
   if [[ -n "$CPU_CORES" ]]; then
     exec nice -n "$NICE_LEVEL" taskset -c "$CPU_CORES" \
       python -m sglang.launch_server \

@@ -2,6 +2,15 @@ from __future__ import annotations
 
 import os
 
+_TRANSFORMERS_APPLY_CHAT_TEMPLATE_ORIGINAL = None
+
+
+def _env_enabled(name: str, *, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"", "0", "false", "no", "off"}
+
 
 def _set_multiprocessing_authkey() -> bool:
     authkey = os.getenv("TASK_ROUTER_MP_AUTHKEY", "").strip()
@@ -73,6 +82,50 @@ def _patch_sglang_torch_reductions() -> bool:
         reductions.rebuild_cuda_tensor = _sglang_rebuild_cuda_tensor_modified
     return True
 
+
+def _transformers_apply_chat_template_unwrap_batch_encoding(self, *args, **kwargs):
+    result = _TRANSFORMERS_APPLY_CHAT_TEMPLATE_ORIGINAL(self, *args, **kwargs)
+    batch_encoding_type = getattr(
+        _transformers_apply_chat_template_unwrap_batch_encoding,
+        "_task_router_batch_encoding_type",
+        None,
+    )
+    if batch_encoding_type is None:
+        return result
+    if (
+        isinstance(result, batch_encoding_type)
+        and kwargs.get("return_tensors") is None
+        and not kwargs.get("return_dict")
+    ):
+        input_ids = result.get("input_ids")
+        if isinstance(input_ids, list):
+            return input_ids
+    return result
+
+
+def _patch_sglang_chat_template_batch_encoding() -> bool:
+    global _TRANSFORMERS_APPLY_CHAT_TEMPLATE_ORIGINAL
+
+    try:
+        from transformers import PreTrainedTokenizerBase
+        from transformers.tokenization_utils_base import BatchEncoding
+    except Exception:
+        return False
+
+    original = PreTrainedTokenizerBase.apply_chat_template
+    if getattr(original, "_task_router_unwrap_batch_encoding", False):
+        return True
+
+    _TRANSFORMERS_APPLY_CHAT_TEMPLATE_ORIGINAL = original
+    _transformers_apply_chat_template_unwrap_batch_encoding._task_router_unwrap_batch_encoding = True
+    _transformers_apply_chat_template_unwrap_batch_encoding._task_router_original = original
+    _transformers_apply_chat_template_unwrap_batch_encoding._task_router_batch_encoding_type = BatchEncoding
+    PreTrainedTokenizerBase.apply_chat_template = _transformers_apply_chat_template_unwrap_batch_encoding
+    return True
+
+
+if _env_enabled("TASK_ROUTER_SGLANG_CHAT_TEMPLATE_FIX"):
+    _patch_sglang_chat_template_batch_encoding()
 
 if _set_multiprocessing_authkey():
     _patch_sglang_torch_reductions()
