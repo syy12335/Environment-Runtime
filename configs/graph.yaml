@@ -15,7 +15,7 @@ model:
       max_tokens: 2048
 
     sglang:
-      name: qwen35-4b
+      name: qwen3-4b
       api_key_env: SGLANG_API_KEY
       base_url: http://127.0.0.1:30000/v1
       max_tokens: 2048

@@ -12,5 +12,5 @@
 ```bash
 export SGLANG_BASE_URL=http://127.0.0.1:30000/v1
 export SGLANG_API_KEY=EMPTY
-export SGLANG_MODEL=qwen35-4b
+export SGLANG_MODEL=qwen3-4b
 ```
