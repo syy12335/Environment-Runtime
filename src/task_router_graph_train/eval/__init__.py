@@ -1,6 +1,13 @@
 from __future__ import annotations
 
 from .evaluator import build_holdout_badcase_candidates, evaluate_holdout_predictions
+from .grpo_diagnostics import (
+    parse_grpo_step_metrics,
+    render_grpo_training_chart_html,
+    summarize_grpo_reward_audit,
+    summarize_grpo_step_metrics,
+    write_grpo_diagnostics,
+)
 from .holdout_inference import (
     build_holdout_prediction_jobs,
     generate_holdout_predictions,
@@ -12,5 +19,10 @@ __all__ = [
     "build_holdout_prediction_jobs",
     "evaluate_holdout_predictions",
     "generate_holdout_predictions",
+    "parse_grpo_step_metrics",
+    "render_grpo_training_chart_html",
     "render_metrics_summary_chart_html",
+    "summarize_grpo_reward_audit",
+    "summarize_grpo_step_metrics",
+    "write_grpo_diagnostics",
 ]

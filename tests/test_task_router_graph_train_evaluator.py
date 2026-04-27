@@ -47,6 +47,51 @@ def test_evaluate_holdout_predictions_uses_semantic_pass(monkeypatch, tmp_path: 
     assert report["evidence_rows"][0]["semantic_pass"] is True
 
 
+def test_evaluate_holdout_predictions_respects_max_samples(monkeypatch, tmp_path: Path) -> None:
+    records_path = tmp_path / "holdout_records.jsonl"
+    predictions_path = tmp_path / "predictions.jsonl"
+
+    def build_row(sample_id: str) -> dict[str, object]:
+        return {
+            "sample_id": sample_id,
+            "state_input": {
+                "USER_INPUT": "进展如何",
+                "ENVIRONMENT_JSON": {"rounds": [], "cur_round": 1, "history_summaries": [], "history_meta_summary": ""},
+                "SKILLS_INDEX": "[]",
+            },
+            "gold_action": {
+                "action_kind": "observe",
+                "tool": "build_context_view",
+                "args": {"round_limit": 3, "include_trace": False, "include_user_input": True, "include_task": True, "include_reply": True},
+                "reason": "观察",
+            },
+            "metadata": {"bucket_key": "holdout"},
+        }
+
+    records_path.write_text(
+        "\n".join(json.dumps(build_row(sample_id), ensure_ascii=False) for sample_id in ("h1", "h2")) + "\n",
+        encoding="utf-8",
+    )
+    predictions_path.write_text(
+        json.dumps({"sample_id": "h1", "prediction": build_row("h1")["gold_action"]}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "task_router_graph_train.eval.evaluator._resolve_regression_teacher",
+        lambda _cfg: {"mode": "online", "base_url": "http://x", "model": "m", "api_key": "k", "timeout_sec": 1, "rubric_id": "controller_regression_judge_v1"},
+    )
+    monkeypatch.setattr(
+        "task_router_graph_train.eval.evaluator.judge_action_semantic_equivalence",
+        lambda **_: {"semantic_equivalent": True, "score": 1.0, "reason": "equivalent"},
+    )
+
+    report = evaluate_holdout_predictions(record_path=records_path, prediction_path=predictions_path, max_samples=1)
+
+    assert report["run_manifest"]["evaluated_count"] == 1
+    assert report["metrics_summary"]["row_count"] == 1
+    assert report["metrics_summary"]["semantic_pass_rate"] == 1.0
+
+
 def test_build_holdout_badcase_candidates_skips_passed_rows() -> None:
     rows = [
         {

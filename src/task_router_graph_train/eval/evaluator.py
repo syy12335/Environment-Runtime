@@ -26,11 +26,13 @@ def evaluate_holdout_predictions(
     record_path: Path,
     prediction_path: Path,
     config_path: Path | None = None,
+    max_samples: int | None = None,
     enqueue_failed_badcases: bool = False,
     badcase_round_id: str | None = None,
     badcase_round_manifest: Path | None = None,
 ) -> dict[str, Any]:
     records = read_jsonl(Path(record_path).resolve())
+    limit = None if max_samples is None or int(max_samples) <= 0 else int(max_samples)
     predictions = read_jsonl(Path(prediction_path).resolve())
     predictions_by_id = {
         str(row.get("sample_id", "")).strip(): row
@@ -42,6 +44,8 @@ def evaluate_holdout_predictions(
 
     evidence_rows: list[dict[str, Any]] = []
     for record in records:
+        if limit is not None and len(evidence_rows) >= limit:
+            break
         sample_id = str(record.get("sample_id", "")).strip()
         state_input = record.get("state_input", {}) if isinstance(record.get("state_input", {}), dict) else {}
         gold_action = record.get("gold_action", {}) if isinstance(record.get("gold_action", {}), dict) else {}
@@ -120,6 +124,8 @@ def evaluate_holdout_predictions(
         "metrics_summary": summary,
         "run_manifest": {
             "record_count": len(records),
+            "evaluated_count": len(evidence_rows),
+            "max_samples": limit,
             "prediction_count": len(predictions_by_id),
             "record_path": str(Path(record_path).resolve()),
             "prediction_path": str(Path(prediction_path).resolve()),
@@ -248,21 +254,30 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     if count == 0:
         return {
             "count": 0,
+            "row_count": 0,
+            "semantic_pass_count": 0,
+            "semantic_failed_count": 0,
             "semantic_pass_rate": 0.0,
             "parse_valid_rate": 0.0,
             "schema_valid_rate": 0.0,
+            "protocol_valid_rate": 0.0,
             "mean_semantic_score": 0.0,
         }
 
     semantic_pass = sum(1 for row in rows if bool(row.get("semantic_pass", False)))
     parse_valid = sum(1 for row in rows if bool(row.get("parse_valid", False)))
     schema_valid = sum(1 for row in rows if bool(row.get("schema_valid", False)))
+    protocol_valid = sum(1 for row in rows if bool(row.get("protocol_valid", False)))
     semantic_scores = [float(row.get("semantic_score", 0.0) or 0.0) for row in rows]
 
     return {
         "count": count,
+        "row_count": count,
+        "semantic_pass_count": semantic_pass,
+        "semantic_failed_count": count - semantic_pass,
         "semantic_pass_rate": round(semantic_pass / count, 6),
         "parse_valid_rate": round(parse_valid / count, 6),
         "schema_valid_rate": round(schema_valid / count, 6),
+        "protocol_valid_rate": round(protocol_valid / count, 6),
         "mean_semantic_score": round(sum(semantic_scores) / count, 6),
     }

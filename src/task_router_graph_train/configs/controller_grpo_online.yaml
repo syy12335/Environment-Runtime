@@ -1,17 +1,27 @@
+# Single source of truth for the controller post-training runbook.
+# Keep SFT-only knobs under `sft`, GRPO/verl update knobs under `update`,
+# and shared model/data/runtime knobs in their own sections.
 seed: 42
 
+# Round identity. `previous_round_id` pulls accepted feedback from the prior round.
 round:
   id: round_0001
   previous_round_id: ""
 
+# Safety switches for the notebook/CLI runbook. Long-running or external-API
+# steps should stay explicit here so re-running cells is predictable.
 run:
   sft: true
+  # Export builds verl datasets/requests; full_update actually launches verl.
   grpo_export_only: true
   grpo_full_update: true
+  # Holdout rollout requires an OpenAI-compatible local inference endpoint.
   predict_holdout: false
+  # Evaluation calls the teacher/regression judge on existing predictions.
   evaluate: true
   annotate_queue: true
 
+# All generated artifacts live under var/runs by default. Paths may use {round_id}.
 outputs:
   sft_dir: var/runs/task_router_graph_train/sft/{round_id}
   sft_merged_dir: var/runs/task_router_graph_train/sft/{round_id}/merged
@@ -19,6 +29,8 @@ outputs:
   eval_dir: var/runs/task_router_graph_train/eval/{round_id}
   holdout_predictions: var/runs/task_router_graph_train/predictions/{round_id}_holdout_predictions.jsonl
 
+# Optional post-GRPO holdout rollout. This is separate from verl rollout:
+# it queries a served model endpoint and writes predictions for teacher scoring.
 holdout_inference:
   base_url: http://127.0.0.1:30000/v1
   api_key_env: SGLANG_API_KEY
@@ -26,8 +38,10 @@ holdout_inference:
   timeout_sec: 60
   max_tokens: 512
   temperature: 0.0
-  max_samples: null
+  max_samples: 30
 
+# Teacher backends. The top-level teacher is the default; role-specific blocks
+# override it for reward judging or regression evaluation.
 teacher:
   mode: online
   base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
@@ -54,6 +68,7 @@ teacher:
     allow_missing_api_key: false
     ranking_path: ""
 
+# GRPO candidate generation settings consumed by verl/SGLang.
 rollout:
   backend: sglang
   num_candidates: 4
@@ -68,13 +83,15 @@ rollout:
   max_num_seqs: 256
   load_format: auto
 
+# GRPO/verl update settings. Do not reuse this learning rate for SFT:
+# SFT has its own `sft.learning_rate` below.
 update:
   backend: verl
   adv_estimator: grpo
   total_epochs: 1
   train_batch_size: 8
   val_batch_size: 4
-  learning_rate: 2.0e-4
+  learning_rate: 2.0e-6
   per_device_train_batch_size: 1
   gradient_accumulation_steps: 4
   ref_log_prob_micro_batch_size_per_gpu: 1
@@ -96,6 +113,8 @@ update:
   use_kl_loss: true
   norm_adv_by_std_in_grpo: true
 
+# Policy model used by SFT and GRPO. GRPO/SGLang direct update currently uses
+# full-rank weight sync, so keep model.lora_rank=0 for that path.
 model:
   path: /model/default/Qwen3-0.6B/Qwen3-0.6B
   # Optional larger local model:
@@ -111,6 +130,7 @@ model:
     - q_proj
     - v_proj
 
+# Shared prompt/response data limits and verl dataset key mapping.
 data:
   max_prompt_length: 2048
   max_response_length: 512
@@ -124,8 +144,11 @@ controller_state_view:
   compress: false
   compress_target_tokens: null
 
+# SFT-only settings. These train the adapter/merged model before GRPO.
+# Keep this LR higher than GRPO unless you intentionally want very slow SFT.
 sft:
   total_epochs: 5
+  learning_rate: 2.0e-4
   export_merged_model: true
   max_seq_length: 1024
   lora_rank: 8
@@ -137,6 +160,7 @@ sft:
   torch_empty_cache_steps: 1
   nproc_per_node: 1
 
+# Feedback loop policy for admitting teacher-labeled badcases into later rounds.
 feedback:
   auto_sft_confidence_threshold: 0.85
   regression_reserve_ratio: 0.2
@@ -146,6 +170,7 @@ feedback:
 debug:
   allow_oracle_file_teacher: false
 
+# Extra artifact switches for local debugging. Keep false for normal runs.
 audit:
   export_rollout_preview: false
   export_teacher_preview: false
