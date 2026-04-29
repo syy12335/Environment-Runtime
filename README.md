@@ -4,7 +4,7 @@ Environment-Runtime 是一个面向稳定、可复用工程流程的任务路由
 
 核心设计思路是按任务不确定性做双重截留：controller 一次截留 + executor pyskill 二次截留。`functest / accutest / perftest` 只是当前仓库的占位示例 task type，用于演示高确定性任务如何更早离开高成本路径；`skill / pyskill` 属于受约束的 agentic loop；仅将剩余高不确定性任务送入自由度最高的 executor loop。这个双重截留策略一方面显著降低 token 消耗，另一方面也能大幅减少幻觉；在高确定性任务占主导的场景下，经验消耗约为 OpenClaw 的 7%。
 
-除运行时能力外，仓库还提供了面向 controller 的 SFT + GRPO 优化框架（含 badcase 回流与 round 资产主线），用于持续优化路由决策质量。当前正式训练链路已经收口为 `manual_protocol_v1 -> SFT -> GRPO -> teacher_queue / annotate_queue / sft_admissions`。这个训练链路的一个直接目标，是缓解小模型在长程任务里逐步偏离 `environment` 协议、忽略运行时状态事实的问题：先用 SFT 对齐 controller 的协议输入输出，再用 GRPO 持续把策略拉回到 environment-grounded 的决策方式。
+除运行时能力外，仓库还提供了面向 controller 的 SFT + GRPO 优化框架（含 badcase 回流与 round 资产主线），用于持续优化路由决策质量。当前已实现链路是 `manual_protocol_v1 -> SFT -> GRPO -> teacher_queue / annotate_queue / sft_admissions`，但 badcase 直接回流到下一轮 SFT 的设计已经过时：它会丢掉当前 policy output 这个 rejected 信号。后续训练侧会转向 `SFT warm start -> GRPO online rollout -> teacher gold answer -> preference_admissions` 的 loop，用 bad/gold pair 支撑 DPO 或后续偏好优化。
 
 训练侧也在评估 `SFT -> GRPO -> DPO -> GRPO -> DPO` 候选链路，用 `preference_admissions` 保留 bad/gold pair，避免把 badcase 只压平成下一轮 SFT 样本。
 
@@ -259,3 +259,12 @@ var/runs/                      # 运行输出
 - `src/task_router_graph_train/docs/grpo_dpo_loop_v1.md`：controller 的 GRPO / DPO 候选演进方案
 - `docs/data_format.md`：输入输出与样本格式
 - `docs/changelog.md`：近期更新
+
+## 更新计划
+
+下一次训练侧更新优先落地 `GRPO online rollout -> teacher gold answer -> preference_admissions` loop：
+
+- `SFT` 收窄为 warm start 和少量协议修补
+- `GRPO` 负责生成当前 policy 的 on-policy candidates
+- teacher 输出 gold answer / chosen response，并保留 policy bad output 作为 rejected
+- `preference_admissions` 成为 badcase 主回流对象，供 DPO 或后续偏好优化消费

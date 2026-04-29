@@ -1,11 +1,26 @@
 # 近期更新对齐
 
-范围：2026-04-14 至 2026-04-24
+范围：2026-04-14 至 2026-04-29
 
 ## 时间线
 
 | 日期 | 提交 | 主题 | 影响面 |
 |---|---|---|---|
+| 2026-04-29 | `a627a36` | docs(post-training): 同步 GRPO DPO 方案入口 | README、overview、data contract、post training、assets README、changelog 同步加入 `GRPO / DPO` 候选链路入口；`preference_admissions` 作为候选回流对象进入文档索引 |
+| 2026-04-29 | `ab89763` | docs(post-training): 增加 GRPO DPO 候选方案 | 新增 `grpo_dpo_loop_v1.md`，明确 `SFT warm start -> GRPO online rollout -> preference admissions -> DPO` 的候选链路、pair schema、验收线和 stale preference 风险 |
+| 2026-04-28 | `3cf93fa` | docs(post-training): 增加 GRPO 前后评测协议 | 新增 `grpo_ab_eval_v1.md`，固定 holdout paired eval、三维评分、deterministic overrides、acceptance bar 与诊断 runbook |
+| 2026-04-28 | `b46c006` | docs: 更新 Environment-Runtime 仓库名 | README 与文档口径从旧名称统一切换到 Environment-Runtime |
+| 2026-04-28 | `33dfe51` | config: 切换阿里云默认模型 | 默认模型配置切回阿里云路径，降低本地 SGLang 不可用时的启动门槛 |
+| 2026-04-27 | `30995f8` | feat(post-training): 补齐 GRPO 诊断与 holdout 评测 | 后训练链路补齐 GRPO 诊断输出和固定 holdout 评测能力，为 checkpoint 前后对比打基础 |
+| 2026-04-27 | `18fc00f` | feat(post-training): 使用 GRPO checkpoint 评测 holdout | holdout 评测接入 GRPO checkpoint，开始支持 `SFT -> GRPO` 的真实 paired comparison |
+| 2026-04-27 | `925cae1` | fix(eval): 表格化 GRPO 与 holdout 诊断 | GRPO / holdout 诊断输出改为更可读的表格结构，方便定位 fixed / regressed / bucket 问题 |
+| 2026-04-27 | `27f6c0d` | fix(grpo): 收紧 KL 约束参数 | 调整 GRPO KL 约束，降低后训练阶段偏离 SFT 协议地基的风险 |
+| 2026-04-27 | `6431faa` | fix(grpo): 修复 SFT 策略接入与 reward 审计 | 修复 GRPO 使用 SFT policy 初始化与 reward audit 记录问题，保证后续诊断能回看 teacher ranking 与 reward 来源 |
+| 2026-04-25 | `691a9db` | feat(post-training): 补齐 holdout 预测与评测图表 | 增加 holdout prediction / eval 图表产物，补齐训练后效果查看入口 |
+| 2026-04-25 | `64bc595` | feat(train): 补齐单机多卡 SFT 与 GRPO 入口 | 增加本地单机多卡 SFT / GRPO 训练入口，为本地 controller 后训练打通执行路径 |
+| 2026-04-25 | `40102e7` | data(train-assets): 添加 round_0001 后训练资产 | 新增 `round_0001` 后训练资产，形成 round 资产主线的首个可执行样例 |
+| 2026-04-25 | `e021d4a` | refactor(train-mainline): 收口 admissions 生命周期与 GRPO 资产契约 | 收口 `teacher_queue / sft_admissions` 生命周期和 GRPO 资产契约，形成当前 SFT 回流主线的实现基础 |
+| 2026-04-25 | `9789d8c` | docs(train-docs): 同步 round 主线与队列入口说明 | 训练文档同步 round 资产主线、teacher queue 与 admissions 入口 |
 | 2026-04-24 | `89248eb` | run: 移除 streamlit 入口并只保留 CLI | 删除 `scripts/run/streamlit_app.py`，移除 `requirements.txt` 中的 `streamlit` 依赖，README 的运行方式与目录说明同步收口到 CLI / case 入口 |
 | 2026-04-24 | `53b744f` | readme: 优化示例 task type 文案 | README 中反复出现的 `functest / accutest / perftest` 统一解释为当前仓的示例 task family，避免把框架定位误读成测试专用实现 |
 | 2026-04-23 | `30ecc39` | docs: 收口 README 与训练文档口径 | 根 README 与 `src/task_router_graph_train/docs/` 全面改写到当前闭环口径，统一为 manifest 安全输入、三路 teacher、badcase 回流、controller regression 与 repo-relative 路径输出 |
@@ -46,14 +61,16 @@
 
 ## 本阶段重点变化
 
-1. 训练闭环从“分散入口”收口到 manifest 主线。
-2. 旧的 `feedback assets / regression / failed harvest` 现在只应视为历史阶段，不再是正式主线。
-3. 当前 controller 后训练正式主线是 `manual_protocol_v1 -> SFT -> GRPO -> teacher_queue -> annotate_queue -> sft_admissions -> next round SFT`。
-4. teacher 职责当前按正式链路收口为 reward ranking、holdout 语义判等与 badcase admission 三类评判。
-5. 训练、评测、CLI 报告中的路径统一脱敏成 repo-relative 形式。
-6. `TASKS_JSON -> ENVIRONMENT_JSON` 的输入命名迁移已经落地，训练态 state 与运行时 contract 更一致。
-7. 根 README 对外定位改成通用工程场景，`functest / accutest / perftest` 明确标为当前内置示例 task family。
-8. 运行入口进一步收紧，当前仅保留 CLI / case 方式，移除了 streamlit 实现与依赖。
+1. 训练闭环从“分散入口”收口到 manifest / round 资产主线。
+2. 当前已实现链路是 `manual_protocol_v1 -> SFT -> GRPO -> teacher_queue -> annotate_queue -> sft_admissions`。
+3. badcase 直接回流到下一轮 SFT 已被标记为过时方向；后续重点转向 `GRPO online rollout -> teacher gold answer -> preference_admissions`。
+4. `GRPO / DPO` 候选方案已形成独立文档，核心是保留 `chosen / rejected` pair，而不是把 badcase 压平成单条 SFT reference。
+5. teacher 职责当前按正式链路收口为 reward ranking、holdout 语义判等与 badcase admission 三类评判；下一阶段会增加 gold answer / preference admission 口径。
+6. 固定 holdout paired evaluation 已补齐，主指标收口到 `level_2_rate_delta / mean_quality_score_delta / fixed_count / regressed_count / bucket-level regression`。
+7. 训练、评测、CLI 报告中的路径统一脱敏成 repo-relative 形式。
+8. `TASKS_JSON -> ENVIRONMENT_JSON` 的输入命名迁移已经落地，训练态 state 与运行时 contract 更一致。
+9. 根 README 对外定位改成通用工程场景，`functest / accutest / perftest` 明确标为当前内置示例 task family。
+10. 运行入口进一步收紧，当前仅保留 CLI / case 方式，移除了 streamlit 实现与依赖。
 
 ## 建议阅读顺序
 
@@ -71,3 +88,18 @@
    - 看 `SFT -> GRPO -> DPO` 候选演进方案
 7. `src/task_router_graph_train/docs/post_training_v1.md`
    - 最后看当前正式主线的闭环约束与后续演进边界
+
+## 下一步
+
+优先实现训练侧新回流主线：
+
+```text
+GRPO online rollout -> teacher gold answer -> preference_admissions
+```
+
+目标：
+
+- 保留当前 policy bad output 作为 rejected
+- 生成 teacher gold answer / chosen response
+- 形成可供 DPO 或后续偏好优化消费的 pair 数据
+- 将 `sft_admissions` 收窄为 warm start 补充与协议修补
