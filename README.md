@@ -124,24 +124,24 @@ allowed-tools: ["your_tool"]
 ```bash
 pip install -r requirements.txt
 
-# 后训练依赖（SFT / GRPO / DPO；CUDA 环境需匹配 verl + SGLang）
-pip install -r requirements-post-training.txt
+# 可选：controller 后训练依赖（SFT / GRPO / DPO；CUDA 环境需匹配 verl + SGLang）
+# pip install -r requirements-post-training.txt
 
-# 阿里云百炼
+# 默认：阿里云百炼
 export MODEL_PROVIDER=aliyun
 export EMBEDDING_PROVIDER=aliyun
 export API_KEY_Qwen=<your_key>
 
-# 本地 sglang
-export MODEL_PROVIDER=sglang
-export EMBEDDING_PROVIDER=sglang
-export SGLANG_API_KEY=EMPTY
-
-# 单次输入
-python scripts/run/run_cli.py --config configs/graph.yaml --input "帮我做一次功能测试"
+# 可选：覆盖为本地 SGLang
+# export MODEL_PROVIDER=sglang
+# export EMBEDDING_PROVIDER=sglang
+# export SGLANG_API_KEY=EMPTY
 
 # 交互模式（多轮复用同一 environment）
 python scripts/run/run_cli.py --config configs/graph.yaml --interactive
+
+# 可选：单次输入
+# python scripts/run/run_cli.py --config configs/graph.yaml --input "帮我做一次功能测试"
 ```
 
 主配置文件是 `configs/graph.yaml`，常用运行参数已经直接写在文件里并附中文注释，主要包括：
