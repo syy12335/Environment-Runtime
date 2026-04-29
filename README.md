@@ -4,7 +4,7 @@ Environment-Runtime 是一个面向稳定、可复用工程流程的任务路由
 
 核心设计思路是按任务不确定性做双重截留：controller 一次截留 + executor pyskill 二次截留。`functest / accutest / perftest` 只是当前仓库的占位示例 task type，用于演示高确定性任务如何更早离开高成本路径；`skill / pyskill` 属于受约束的 agentic loop；仅将剩余高不确定性任务送入自由度最高的 executor loop。这个双重截留策略一方面显著降低 token 消耗，另一方面也能大幅减少幻觉；在高确定性任务占主导的场景下，经验消耗约为 OpenClaw 的 7%。
 
-除运行时能力外，仓库还提供了面向 controller 的后训练框架，用 `SFT warm start -> (GRPO online rollout -> DPO) -> (GRPO online rollout -> DPO) -> ...` 的循环持续优化路由决策质量。SFT 负责把 controller 拉到稳定的协议输入输出空间；每轮 GRPO 在当前 policy 上采样候选动作并暴露真实错误分布，teacher 将 gold answer / chosen response 和 bad output 组成 `preference_admissions`，再由 DPO 消费这些 `state_input / chosen / rejected` pair 更新 policy。
+除运行时能力外，仓库还提供了面向 controller 的后训练框架，用 `SFT warm start -> (GRPO online rollout -> DPO) -> (GRPO online rollout -> DPO) -> ...` 的循环持续优化路由决策质量。SFT 负责把 controller 拉到稳定的协议输入输出空间；每轮 GRPO 在当前 policy 上采样候选动作并暴露真实错误分布，teacher 将 gold answer / chosen response 和 bad output 组成 `preference_admissions`，再由 DPO 消费来更新 policy。
 
 ---
 
@@ -187,6 +187,7 @@ python scripts/run/run_cases.py --config configs/graph.yaml --cases-dir /path/to
 - 双重截留的确定性判断需要插件化：当前 `functest / accutest / perftest` 等确定性分流仍偏硬编码，后续要改成可注册、可替换的插件机制。
 - 运行时侧继续细化 Environment 中的 trace / track：补齐更稳定的事件结构、视图裁剪和排障读取口径。
 - 细化 Environment 压缩机制：history / view 压缩要依据当前 task 的目标、状态和证据需求选择保留内容，不能无目的地压缩。
+- 优化 agent 策略以提高 KV-cache 命中率：收敛 prompt 稳定前缀、agent 调度和上下文注入顺序，减少可复用 cache 被动态片段打断。
 - 细化 tool 结果裁剪：当前仍是掐头去尾 + 中间 BM25 命中片段的规则策略，后续需要补齐更稳定的相关性评分、去重和结构化保真。
 - 补一组可复现 benchmark：固定 case 分布、运行配置和 token 统计口径，用可复跑数据证明双重截留带来的 token 节省。
 - 补齐项目工程化基础：新增 `pyproject.toml`、`LICENSE`，并接入 GitHub Actions 跑基础测试。
