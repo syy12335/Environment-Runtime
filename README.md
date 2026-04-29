@@ -206,8 +206,7 @@ python scripts/run/run_cases.py --config configs/graph.yaml --cases-dir /path/to
 
 ## 更新计划
 
-下一步训练侧会把 badcase 回流改成 DPO 偏好优化链路。
-
-核心变化是：badcase 不再只沉淀为下一轮 SFT 的修正样本，而是和 teacher 给出的更优 action 组成同一状态下的偏好样本。DPO 会消费这些偏好样本，继续优化 controller 的 environment-grounded 决策能力。
-
-运行时侧会继续细化 Environment 中的 trace / track 实现，重点补齐更稳定的事件结构、视图裁剪和排障读取口径。
+- 训练侧把 badcase 回流改成 DPO 偏好优化链路：badcase 不再只沉淀为下一轮 SFT 的修正样本，而是和 teacher 给出的更优 action 组成同一状态下的偏好样本，由 DPO 继续优化 controller 的 environment-grounded 决策能力。
+- 运行时侧继续细化 Environment 中的 trace / track：补齐更稳定的事件结构、视图裁剪和排障读取口径。
+- 细化 Environment 压缩机制：history / view 压缩要依据当前 task 的目标、状态和证据需求选择保留内容，不能无目的地压缩。
+- 细化 tool 结果裁剪：当前仍是掐头去尾 + 中间 BM25 命中片段的规则策略，后续需要补齐更稳定的相关性评分、去重和结构化保真。
