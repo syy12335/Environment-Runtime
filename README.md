@@ -113,10 +113,18 @@ export MODEL_PROVIDER=aliyun
 export EMBEDDING_PROVIDER=aliyun
 export API_KEY_Qwen=<your_key>
 
-# 可选：覆盖为本地 SGLang
-# export MODEL_PROVIDER=sglang
-# export EMBEDDING_PROVIDER=sglang
+# 可选：改用本地 SGLang
+# export SGLANG_MODEL_PATH=/path/to/Qwen3-4B
+# export SGLANG_SERVED_MODEL_NAME=qwen3-4b
 # export SGLANG_API_KEY=EMPTY
+# ./scripts/sglang/start.sh
+# ./scripts/sglang/status.sh
+# export MODEL_PROVIDER=sglang
+# export EMBEDDING_PROVIDER=aliyun
+# 若本地 SGLang 也提供 embedding，再改成：
+# export EMBEDDING_PROVIDER=sglang
+# 停止本地服务时：
+# ./scripts/sglang/stop.sh
 
 # 交互模式（多轮复用同一 environment）
 python scripts/run/run_cli.py --config configs/graph.yaml --interactive
@@ -151,18 +159,6 @@ python scripts/run/run_cases.py --config configs/graph.yaml --cases-dir /path/to
 
 - 若存在 `agent=pyskill, event=dispatch_pyskill`，说明任务已经进入异步 workflow / pyskill 派发
 - 若当前轮直接生成 `done/failed` 结果且没有 `dispatch_pyskill`，通常说明任务在同步 skill 或 executor 路径内完成
-
-## 本地 SGLang
-
-运行入口默认优先使用已就绪的本地 SGLang；若服务不可达，会快速回退到阿里云。需要让运行入口自动拉起 SGLang 时，可设置 `SGLANG_AUTO_START=1`。
-
-```bash
-./scripts/sglang/start.sh
-./scripts/sglang/status.sh
-./scripts/sglang/stop.sh
-```
-
----
 
 ## 局限性
 
