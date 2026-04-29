@@ -188,3 +188,6 @@ python scripts/run/run_cases.py --config configs/graph.yaml --cases-dir /path/to
 - 运行时侧继续细化 Environment 中的 trace / track：补齐更稳定的事件结构、视图裁剪和排障读取口径。
 - 细化 Environment 压缩机制：history / view 压缩要依据当前 task 的目标、状态和证据需求选择保留内容，不能无目的地压缩。
 - 细化 tool 结果裁剪：当前仍是掐头去尾 + 中间 BM25 命中片段的规则策略，后续需要补齐更稳定的相关性评分、去重和结构化保真。
+- 补一组可复现 benchmark：固定 case 分布、运行配置和 token 统计口径，用可复跑数据证明双重截留带来的 token 节省。
+- 补齐项目工程化基础：新增 `pyproject.toml`、`LICENSE`，并接入 GitHub Actions 跑基础测试。
+- 拆分运行时大文件：按 graph 编排、node 实现、工具执行和 skill worker 边界拆分 `graph.py`、`nodes.py`、`web_search.py`。
