@@ -1002,7 +1002,7 @@ def _require_training_dependencies() -> dict[str, Any]:
     except ImportError as exc:  # pragma: no cover - exercised manually after installing training deps
         raise RuntimeError(
             "Controller SFT training dependencies are missing. "
-            "Please install requirements-sft.txt before running train_sft."
+            "Please install requirements-post-training.txt before running train_sft."
         ) from exc
 
     return {

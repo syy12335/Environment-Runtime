@@ -1,0 +1,13 @@
+# Controller 后训练依赖：SFT warm start、GRPO full update、
+# DPO 偏好优化和本地 HF 评测。
+torch>=2.2
+transformers>=4.40
+peft>=0.10
+accelerate>=0.29
+sentencepiece>=0.2
+datasets>=2.19
+trl>=0.12
+
+# GRPO full update 通过 verl + SGLang 运行。
+# CUDA 相关 wheel 仍需和机器镜像匹配。
+verl[sglang] @ git+https://github.com/verl-project/verl.git

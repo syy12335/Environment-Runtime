@@ -848,7 +848,10 @@ def _run_verl_training(
     stream_logs: bool = True,
 ) -> dict[str, Any]:
     if importlib.util.find_spec("verl") is None:
-        raise RuntimeError("verl is not installed in the current Python environment")
+        raise RuntimeError(
+            "verl is not installed in the current Python environment. "
+            "Install requirements-post-training.txt in a CUDA environment compatible with verl/SGLang."
+        )
 
     command = [sys.executable, "-m", "verl.trainer.main_ppo", *hydra_overrides]
     env = os.environ.copy()

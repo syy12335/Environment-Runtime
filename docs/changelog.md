@@ -7,7 +7,7 @@
 | 日期 | 提交 | 主题 | 影响面 |
 |---|---|---|---|
 | 2026-04-29 | `a627a36` | docs(post-training): 同步 GRPO DPO 方案入口 | README、overview、data contract、post training、assets README、changelog 同步加入 `GRPO / DPO` 候选链路入口；`preference_admissions` 作为候选回流对象进入文档索引 |
-| 2026-04-29 | `ab89763` | docs(post-training): 增加 GRPO DPO 候选方案 | 新增 `grpo_dpo_loop_v1.md`，明确 `SFT warm start -> GRPO online rollout -> preference admissions -> DPO` 的候选链路、pair schema、验收线和 stale preference 风险 |
+| 2026-04-29 | `ab89763` | docs(post-training): 增加 GRPO DPO 候选方案 | 新增 `grpo_dpo_loop_v1.md`，明确 `SFT warm start -> (GRPO online rollout -> DPO) -> ...` 的候选循环、pair schema、验收线和 stale preference 风险 |
 | 2026-04-28 | `3cf93fa` | docs(post-training): 增加 GRPO 前后评测协议 | 新增 `grpo_ab_eval_v1.md`，固定 holdout paired eval、三维评分、deterministic overrides、acceptance bar 与诊断 runbook |
 | 2026-04-28 | `b46c006` | docs: 更新 Environment-Runtime 仓库名 | README 与文档口径从旧名称统一切换到 Environment-Runtime |
 | 2026-04-28 | `33dfe51` | config: 切换阿里云默认模型 | 默认模型配置切回阿里云路径，降低本地 SGLang 不可用时的启动门槛 |
@@ -63,7 +63,7 @@
 
 1. 训练闭环从“分散入口”收口到 manifest / round 资产主线。
 2. 当前已实现链路是 `manual_protocol_v1 -> SFT -> GRPO -> teacher_queue -> annotate_queue -> sft_admissions`。
-3. badcase 直接回流到下一轮 SFT 已被标记为过时方向；后续重点转向 `GRPO online rollout -> DPO`，其中 teacher gold answer 与 bad output 会组成 `preference_admissions`。
+3. badcase 直接回流到下一轮 SFT 已被标记为过时方向；后续重点转向 `GRPO online rollout -> DPO` 循环，其中 teacher gold answer 与 bad output 会组成 `preference_admissions`。
 4. `GRPO / DPO` 候选方案已形成独立文档，核心是保留 `chosen / rejected` pair，而不是把 badcase 压平成单条 SFT reference。
 5. teacher 职责当前按正式链路收口为 reward ranking、holdout 语义判等与 badcase admission 三类评判；下一阶段会增加 gold answer / preference admission 口径。
 6. 固定 holdout paired evaluation 已补齐，主指标收口到 `level_2_rate_delta / mean_quality_score_delta / fixed_count / regressed_count / bucket-level regression`。
@@ -94,7 +94,7 @@
 优先实现训练侧新回流主线：
 
 ```text
-GRPO online rollout -> DPO
+GRPO online rollout -> teacher gold answer / bad output pair -> DPO -> GRPO online rollout -> ...
 ```
 
 目标：

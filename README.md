@@ -4,7 +4,7 @@ Environment-Runtime 是一个面向稳定、可复用工程流程的任务路由
 
 核心设计思路是按任务不确定性做双重截留：controller 一次截留 + executor pyskill 二次截留。`functest / accutest / perftest` 只是当前仓库的占位示例 task type，用于演示高确定性任务如何更早离开高成本路径；`skill / pyskill` 属于受约束的 agentic loop；仅将剩余高不确定性任务送入自由度最高的 executor loop。这个双重截留策略一方面显著降低 token 消耗，另一方面也能大幅减少幻觉；在高确定性任务占主导的场景下，经验消耗约为 OpenClaw 的 7%。
 
-除运行时能力外，仓库还提供了面向 controller 的后训练框架，用 `SFT warm start -> GRPO online rollout -> DPO` 的闭环持续优化路由决策质量。SFT 负责把 controller 拉到稳定的协议输入输出空间，GRPO 负责在当前 policy 上采样候选动作并暴露真实错误分布；teacher 在 rollout 后生成 gold answer / chosen response，并把它和 bad output 组成 `preference_admissions`，作为 DPO 消费的 `state_input / chosen / rejected` 训练队列。
+除运行时能力外，仓库还提供了面向 controller 的后训练框架，用 `SFT warm start -> (GRPO online rollout -> DPO) -> (GRPO online rollout -> DPO) -> ...` 的循环持续优化路由决策质量。SFT 负责把 controller 拉到稳定的协议输入输出空间；每轮 GRPO 在当前 policy 上采样候选动作并暴露真实错误分布，teacher 将 gold answer / chosen response 和 bad output 组成 `preference_admissions`，再由 DPO 消费这些 `state_input / chosen / rejected` pair 更新 policy。
 
 ---
 
@@ -123,6 +123,9 @@ allowed-tools: ["your_tool"]
 
 ```bash
 pip install -r requirements.txt
+
+# 后训练依赖（SFT / GRPO / DPO；CUDA 环境需匹配 verl + SGLang）
+pip install -r requirements-post-training.txt
 
 # 阿里云百炼
 export MODEL_PROVIDER=aliyun

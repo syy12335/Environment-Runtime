@@ -6,6 +6,13 @@
 
 - `controller_post_training_run.ipynb`：Jupyter 版 runbook，按 `prepare_round -> SFT -> GRPO+holdout_eval -> annotate_queue` 顺序跑。
 
+依赖安装：
+
+```bash
+pip install -r requirements-post-training.txt
+python -c "import verl, sglang"
+```
+
 默认配置统一读取 `src/task_router_graph_train/configs/controller_grpo_online.yaml`。notebook 只作为执行入口，不维护第二份训练配置。
 其中 `sft.learning_rate` 和 `sft.lora_*` 控制 SFT adapter 训练，`update.learning_rate`、`update.total_epochs`、`update.kl_loss_coef` 和 `model.lora_*` 控制 GRPO/verl 更新；当前 SGLang direct update 默认使用 `model.lora_rank=0`。
 GRPO full update 会实时打印关键阶段、heartbeat 和 `critic/score/mean` 等 step 指标；完整 stdout/stderr 仍写在对应 round 的 `verl_stdout.log`、`verl_stderr.log`。
