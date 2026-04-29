@@ -55,69 +55,65 @@ Environment-Runtime 的做法是：把任务按确定性拆成多层执行路径
 
 ## 核心机制
 
-### 1. Environment：运行时协议真源
+### 1. Environment：唯一状态真源与训练/推理统一口径
 
-`environment` 是整个 graph 的共享状态载体。多轮任务、异步回填、失败重试和历史摘要都围绕它展开；controller 运行时读取的是从它派生出的 context view，训练侧也复用同一口径构造 `ENVIRONMENT_JSON`。
+`Environment` 是整个 graph 的共享状态载体，多轮任务、异步回填、失败重试、历史摘要和最终回复都围绕它展开。controller 运行时不直接读取杂散上下文，而是读取从 Environment 派生出的正式 view。
 
-仓库内置的 controller 后训练也是围绕这件事设计的：小模型做长程任务时容易逐步偏离 environment 事实，SFT 先把协议输入输出对齐，GRPO 再通过 online rollout 暴露当前 policy 的错误分布，teacher gold answer 与 bad output 组成 preference pair，用于持续强化“基于 environment 做下一步决策”的能力。
+训练侧复用同一套入口：`build_controller_state_input(...)` 会把 runtime Environment 收敛成 `{ USER_INPUT, ENVIRONMENT_JSON, SKILLS_INDEX }`。这意味着训练样本和线上 controller 推理看到的是同一种状态结构，减少“训练时一套 context、运行时另一套 context”的口径漂移。
 
-### 2. 异步非阻塞回填
+### 2. 双重截留：按任务不确定性压缩 LLM 路径
 
-当前内置的三类示例 task type `functest / accutest / perftest` 通过 `ThreadPoolExecutor` 异步执行。当前对话轮会立即返回 `running`，不阻塞用户继续交互。任务完成后，在下一轮的 `collect_workflows` 阶段回填结果，新增 `pyskill_task` 记录并回链 source task。
+controller 只负责路由和结构化 task 生成，默认 `max_steps=3`。确定性越高的任务越早离开高成本 LLM 路径：`functest / accutest / perftest` 直接进入 `ThreadPoolExecutor`；命中确定性 skill 时进入 sync skill 或 `pyskill`；只有剩余高不确定性任务才进入完整 executor loop（默认 `max_steps=4`）。
 
 ```text
-Round 1: 用户发起功能测试 -> task.status=running，立即回复“已提交”
-Round 2: 用户问“怎么样了” -> collect_workflows 回收结果 -> 快捷汇总路径 -> 直接回复结果
+controller
+  ├─ deterministic dispatch
+  ├─ sync skill / pyskill
+  └─ executor loop
 ```
 
-### 3. pyskill：进程级非阻塞执行
+这个设计的目标不是“所有任务都 agent 化”，而是把完整 agentic loop 留给真正需要不确定性搜索的部分。
 
-对于流程固定但耗时较长的 skill，可声明 `skill-mode: pyskill`。executor 命中后通过 `subprocess.Popen` 非阻塞派发，LLM 只参与“是否启动”这一步，后续执行与 LLM 解耦。
+### 3. PySkill：进程级非阻塞与幂等回填
 
-当前仓库内的 `time_range_info` 就是一个 pyskill 样板。
+对于流程固定但耗时较长的 skill，可声明 `skill-mode: pyskill`。executor 命中后通过 `subprocess.Popen` 非阻塞派发，source task 立即进入 `running`，并在 `track` 中记录 `run_id / pid / dispatch_pyskill`。
 
 进程管理要点：
 
 - 每个 pyskill 进程有唯一 `run_id`，stdout/stderr 落盘到 skill 目录下的 `.pyskill_runtime/`
-- `pre_reply_collect` 会在每轮回复前巡检死进程和超时任务，自动 failed 收敛
 - `collect_workflows` 与 `pre_reply_collect` 都可回收结果，但同一 `run_id` 只会被幂等回填一次
+- `pre_reply_collect` 会在每轮回复前巡检死进程、超时任务和句柄丢失任务，自动 failed 收敛
+- 回填时会新增 `pyskill_task`，并把 source task 的 `result` 回链到 `pyskill_task(round_id=..., task_id=...)`
 
-### 4. Skill 插件化
+### 4. Controller GRPO reward：优先约束可见状态 grounding
 
-新增 executor skill 只需要添加目录、`SKILL.md` 和可选脚本，不需要修改 `graph.py` 或维护中心索引：
+controller 后训练的 reward 不是只看“是否像 gold action”，而是把是否基于可见状态做决策放在最高权重：
 
 ```text
-src/task_router_graph/skills/executor/
-  your_skill/
-    SKILL.md
-    scripts/
-      your_tool.py
+environment = 0.5
+action      = 0.3
+args        = 0.2
 ```
 
-`SKILL.md` frontmatter 约定：
+`environment` 维度只判断 candidate 是否 grounded in 当前可见 state。reward teacher 只能依据 `USER_INPUT + ENVIRONMENT_JSON + SKILLS_INDEX`，不使用 hidden state、verifier sidecar 或默认不可见的完整 trace。这个约束会把 controller 的主要训练压力放在“不要编造不可见事实、不要忽略显式 Environment 状态”上。
 
-```yaml
----
-name: your-skill-name
-description: 这个 skill 解决什么问题
-when_to_use: 什么时候应该命中这个 skill
-skill-mode: sync        # 或 pyskill
-allowed-tools: ["your_tool"]
----
-# 具体执行规则写在正文
-```
+### 5. Track：可观测日志与低耦合状态通道
 
-运行时链路：
+`TaskRecord.track` 是 controller、executor、pyskill、diagnoser、reply 的统一执行轨迹。`update_node` 会把 controller trace 与 agent track 合并写入 Environment；failure diagnose 和 final reply 会继续向最后一条 task 追加结构化事件。
 
-`扫描 SKILL.md -> 校验 frontmatter 与脚本映射 -> 注入元数据到 executor prompt -> 模型命中后 read path -> 按规则执行 skill_tool`
+track 默认不自动暴露给 controller，只有 `include_trace=true` 或 `previous_failed_track` 这类显式读取才会带出完整轨迹，避免 trace 膨胀影响常规路由。
 
-### 5. 失败治理
+同时，track 也承担轻量状态共享：`_build_round_skill_read_context(...)` 会扫描当前 round 里已记录的 `read SKILL.md` 事件，让后续 executor 知道哪些 skill 文件已经读过，从而减少同一 round 内的重复读取。
 
-失败任务进入 `failure_diagnose -> route` 循环，最多重试 `max_failed_retries` 次，默认是 3。失败上下文通过 `previous_failed_track` 在多轮之间传递，避免“下一轮失忆”；超过上限后自动收敛到 `final_reply`。
+### 6. Context 压缩：三层防线
 
-### 6. Agent Memory 压缩
+上下文治理分三层：
 
-各 agent 会按角色维护上下文视图；当上下文超过 `context_window_tokens`（默认 3000）时触发摘要压缩。工具返回过大时按 `head + mid_hits + tail` 规则裁剪，尽量保留证据密度，避免原样整段灌入模型。
+1. Agent Memory 私有压缩：各 agent 维护自己的 memory，超过 `context_window_tokens` 后触发摘要压缩。
+2. Tool 结果规则裁剪：工具返回过大时按 `head + mid_hits + tail` 规则保留首尾和中段命中证据。
+3. Environment History Rollup：旧轮次折叠成 `history_summaries` 和 `history_meta_summary`。
+
+Rollup 不会无条件折叠所有历史；`running` 相关轮、最近失败轮、source / pyskill 链接相关轮会被保护，避免压缩后丢失回收、重试和溯源所需的关键状态。
 
 ## Quick Start
 
